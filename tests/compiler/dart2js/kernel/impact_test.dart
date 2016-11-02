@@ -602,9 +602,7 @@ main(List<String> args) {
         ]);
     compiler.resolution.retainCachesForTesting = true;
     await compiler.run(entryPoint);
-    compiler.libraryLoader.libraries.forEach((LibraryElement library) {
-      checkLibrary(compiler, library);
-    });
+    checkLibrary(compiler, compiler.mainApp);
   });
 }
 
@@ -624,18 +622,6 @@ void checkLibrary(Compiler compiler, LibraryElement library) {
 }
 
 void checkElement(Compiler compiler, AstElement element) {
-  if (compiler.backend.isNative(element)) {
-    // Skip native functions for now; kernel does not provide their
-    // signature which we need to derive their native behavior.
-    return;
-  }
-  if (element.isConstructor) {
-    ConstructorElement constructor = element;
-    if (constructor.isRedirectingFactory) {
-      // Skip redirecting constructors for now; they might not be supported.
-      return;
-    }
-  }
   ResolutionImpact astImpact = compiler.resolution.getResolutionImpact(element);
   astImpact = laxImpact(compiler, element, astImpact);
   ResolutionImpact kernelImpact = build(compiler, element.resolvedAst);

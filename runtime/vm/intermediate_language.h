@@ -477,6 +477,7 @@ class EmbeddedArray<T, 0> {
   M(AllocateUninitializedContext)                                              \
   M(CloneContext)                                                              \
   M(BinarySmiOp)                                                               \
+  M(CheckedSmiComparison)                                                      \
   M(CheckedSmiOp)                                                              \
   M(BinaryInt32Op)                                                             \
   M(UnarySmiOp)                                                                \
@@ -2381,7 +2382,7 @@ class ComparisonInstr : public Definition {
   void set_operation_cid(intptr_t value) { operation_cid_ = value; }
   intptr_t operation_cid() const { return operation_cid_; }
 
-  void NegateComparison() {
+  virtual void NegateComparison() {
     kind_ = Token::NegateComparison(kind_);
   }
 
@@ -3002,6 +3003,10 @@ class PolymorphicInstanceCallInstr : public TemplateDefinition<0, Throws> {
 
   virtual EffectSet Effects() const { return EffectSet::All(); }
 
+  virtual Definition* Canonicalize(FlowGraph* graph);
+
+  static RawType* ComputeRuntimeType(const ICData& ic_data);
+
   PRINT_OPERANDS_TO_SUPPORT
 
  private:
@@ -3364,6 +3369,7 @@ class StaticCallInstr : public TemplateDefinition<0, Throws> {
 
   DECLARE_INSTRUCTION(StaticCall)
   virtual CompileType ComputeType() const;
+  virtual Definition* Canonicalize(FlowGraph* flow_graph);
 
   // Accessors forwarded to the AST node.
   const Function& function() const { return function_; }
@@ -6997,7 +7003,7 @@ class CheckedSmiOpInstr : public TemplateDefinition<2, Throws> {
   Value* left() const { return inputs_[0]; }
   Value* right() const { return inputs_[1]; }
 
-  virtual bool CanDeoptimize() const { return true; }
+  virtual bool CanDeoptimize() const { return false; }
 
   virtual EffectSet Effects() const { return EffectSet::All(); }
 
@@ -7011,6 +7017,53 @@ class CheckedSmiOpInstr : public TemplateDefinition<2, Throws> {
   InstanceCallInstr* call_;
   const Token::Kind op_kind_;
   DISALLOW_COPY_AND_ASSIGN(CheckedSmiOpInstr);
+};
+
+
+class CheckedSmiComparisonInstr : public TemplateComparison<2, Throws> {
+ public:
+  CheckedSmiComparisonInstr(Token::Kind op_kind,
+                            Value* left,
+                            Value* right,
+                            InstanceCallInstr* call)
+      : TemplateComparison(call->token_pos(), op_kind, call->deopt_id()),
+        call_(call),
+        is_negated_(false) {
+    SetInputAt(0, left);
+    SetInputAt(1, right);
+  }
+
+  InstanceCallInstr* call() const { return call_; }
+
+  virtual bool CanDeoptimize() const { return false; }
+
+  virtual Definition* Canonicalize(FlowGraph* flow_graph);
+
+  virtual void NegateComparison() {
+    ComparisonInstr::NegateComparison();
+    is_negated_ = !is_negated_;
+  }
+
+  bool is_negated() const { return is_negated_; }
+
+  virtual EffectSet Effects() const { return EffectSet::All(); }
+
+  PRINT_OPERANDS_TO_SUPPORT
+
+  DECLARE_INSTRUCTION(CheckedSmiComparison)
+
+  virtual void EmitBranchCode(FlowGraphCompiler* compiler,
+                              BranchInstr* branch);
+
+  virtual Condition EmitComparisonCode(FlowGraphCompiler* compiler,
+                                       BranchLabels labels);
+
+  virtual ComparisonInstr* CopyWithNewOperands(Value* left, Value* right);
+
+ private:
+  InstanceCallInstr* call_;
+  bool is_negated_;
+  DISALLOW_COPY_AND_ASSIGN(CheckedSmiComparisonInstr);
 };
 
 

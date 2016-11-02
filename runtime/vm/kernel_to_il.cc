@@ -71,8 +71,10 @@ void ScopeBuilder::AddParameters(FunctionNode* function, intptr_t pos) {
 
 void ScopeBuilder::AddParameter(VariableDeclaration* declaration,
                                 intptr_t pos) {
-  // TODO(27590): Handle final.
   LocalVariable* variable = MakeVariable(H.DartSymbol(declaration->name()));
+  if (declaration->IsFinal()) {
+    variable->set_is_final();
+  }
   scope_->InsertParameterAt(pos, variable);
   result_->locals.Insert(declaration, variable);
 
@@ -205,11 +207,16 @@ const dart::String& ScopeBuilder::GenerateName(const char* prefix,
 
 
 void ScopeBuilder::AddVariable(VariableDeclaration* declaration) {
-  // TODO(27590): Handle final and const, including function declarations.
+  // In case `declaration->IsConst()` the flow graph building will take care of
+  // evaluating the constant and setting it via
+  // `declaration->SetConstantValue()`.
   const dart::String& name = declaration->name()->is_empty()
                                  ? GenerateName(":var", name_index_++)
                                  : H.DartSymbol(declaration->name());
   LocalVariable* variable = MakeVariable(name);
+  if (declaration->IsFinal()) {
+    variable->set_is_final();
+  }
   scope_->AddVariable(variable);
   result_->locals.Insert(declaration, variable);
 }
@@ -237,8 +244,12 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
         ContextScope::Handle(Z, function.context_scope()));
   }
   current_function_scope_ = scope_ = new (Z) LocalScope(enclosing_scope, 0, 0);
+
+  LocalVariable* context_var = parsed_function->current_context_var();
+  context_var->set_is_forced_stack();
+  scope_->AddVariable(context_var);
   scope_->AddVariable(parsed_function->EnsureExpressionTemp());
-  scope_->AddVariable(parsed_function->current_context_var());
+
   parsed_function->SetNodeSequence(
       new SequenceNode(TokenPosition::kNoSource, scope_));
 
@@ -261,6 +272,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       intptr_t pos = 0;
       if (function.IsClosureFunction()) {
         LocalVariable* variable = MakeVariable(Symbols::ClosureParameter());
+        variable->set_is_forced_stack();
         scope_->InsertParameterAt(pos++, variable);
       } else if (!function.is_static()) {
         // We use [is_static] instead of [IsStaticFunction] because the latter
@@ -517,6 +529,7 @@ void ScopeBuilder::VisitForInStatement(ForInStatement* node) {
 void ScopeBuilder::AddSwitchVariable() {
   if ((depth_.function_ == 0) && (result_->switch_variable == NULL)) {
     LocalVariable* variable = MakeVariable(Symbols::SwitchExpr());
+    variable->set_is_forced_stack();
     current_function_scope_->AddVariable(variable);
     result_->switch_variable = variable;
   }
@@ -928,45 +941,9 @@ dart::String& TranslationHelper::DartSymbol(String* content) const {
 
 const dart::String& TranslationHelper::DartClassName(
     kernel::Class* kernel_klass) {
-  if (kernel_klass->name() != NULL) {
-    ASSERT(kernel_klass->IsNormalClass());
-    dart::String& name = DartString(kernel_klass->name());
-    return ManglePrivateName(kernel_klass->parent(), &name);
-  } else {
-    // Mixin class names are not mangled.
-    ASSERT(kernel_klass->IsMixinClass());
-
-    // We construct the string from right to left:
-    //     "Base&Mixin1&Mixin2&...&MixinN"
-    dart::String& partial = dart::String::Handle(Z, dart::String::New(""));
-    dart::String& amp = dart::String::Handle(Z, dart::String::New("&"));
-    dart::String& tmp = dart::String::Handle(Z);
-    while (kernel_klass->name() == NULL) {
-      ASSERT(kernel_klass->IsMixinClass());
-
-      MixinClass* kernel_mixin_class = MixinClass::Cast(kernel_klass);
-      InterfaceType* base_type = kernel_mixin_class->first();
-      InterfaceType* mixin_type = kernel_mixin_class->second();
-
-      String* mixin_name = NormalClass::Cast(mixin_type->klass())->name();
-
-      tmp = dart::String::FromUTF8(mixin_name->buffer(), mixin_name->size());
-
-      partial = dart::String::Concat(amp, partial);
-      partial = dart::String::Concat(tmp, partial);
-
-      kernel_klass = base_type->klass();
-    }
-
-    tmp = dart::String::FromUTF8(kernel_klass->name()->buffer(),
-                                 kernel_klass->name()->size());
-
-    partial = dart::String::Concat(amp, partial);
-    partial = dart::String::Concat(tmp, partial);
-
-    partial = dart::Symbols::New(thread_, partial);
-    return partial;
-  }
+  ASSERT(kernel_klass->IsNormalClass());
+  dart::String& name = DartString(kernel_klass->name());
+  return ManglePrivateName(kernel_klass->parent(), &name);
 }
 
 
@@ -1004,8 +981,8 @@ const dart::String& TranslationHelper::DartSetterName(Name* kernel_name) {
   if (content->buffer()[content->size() - 1] == '=') {
     skip = 1;
   }
-  dart::String& name = dart::String::ZoneHandle(
-      Z, dart::String::FromUTF8(content->buffer(), content->size() - skip));
+  dart::String& name = dart::String::ZoneHandle(Z, dart::String::FromUTF8(
+        content->buffer(), content->size() - skip, allocation_space_));
   ManglePrivateName(kernel_name->library(), &name, false);
   name = dart::Field::SetterSymbol(name);
   return name;
@@ -1044,15 +1021,12 @@ const dart::String& TranslationHelper::DartMethodName(Name* kernel_name) {
 const dart::String& TranslationHelper::DartFactoryName(Class* klass,
                                                        Name* method_name) {
   // [DartMethodName] will mangle the name.
-  dart::String& name =
-      dart::String::Handle(Z, DartMethodName(method_name).raw());
-
-  // We build a String which looks like <classname>.<constructor-name>.
-  // [DartClassName] will mangle the name.
-  dart::String& temp = dart::String::Handle(Z, DartClassName(klass).raw());
-  temp = dart::String::Concat(temp, Symbols::Dot());
-  temp = dart::String::Concat(temp, name);
-  return dart::String::ZoneHandle(Z, dart::Symbols::New(thread_, temp));
+  GrowableHandlePtrArray<const dart::String> pieces(Z, 3);
+  pieces.Add(DartClassName(klass));
+  pieces.Add(Symbols::Dot());
+  pieces.Add(DartMethodName(method_name));
+  return dart::String::ZoneHandle(
+      Z, dart::Symbols::FromConcatAll(thread_, pieces));
 }
 
 
@@ -1217,7 +1191,8 @@ dart::String& TranslationHelper::ManglePrivateName(Library* kernel_library,
 const Array& TranslationHelper::ArgumentNames(List<NamedExpression>* named) {
   if (named->length() == 0) return Array::ZoneHandle(Z);
 
-  const Array& names = Array::ZoneHandle(Z, Array::New(named->length()));
+  const Array& names = Array::ZoneHandle(Z,
+      Array::New(named->length(), allocation_space_));
   for (intptr_t i = 0; i < named->length(); ++i) {
     names.SetAt(i, DartSymbol((*named)[i]->name()));
   }
@@ -1225,8 +1200,25 @@ const Array& TranslationHelper::ArgumentNames(List<NamedExpression>* named) {
 }
 
 
+ConstantEvaluator::ConstantEvaluator(FlowGraphBuilder* builder,
+                                     Zone* zone,
+                                     TranslationHelper* h,
+                                     DartTypeTranslator* type_translator)
+    : builder_(builder),
+      isolate_(Isolate::Current()),
+      zone_(zone),
+      translation_helper_(*h),
+      type_translator_(*type_translator),
+      script_(dart::Script::Handle(
+            zone, builder_->parsed_function_->function().script())),
+      result_(dart::Instance::Handle(zone)) {}
+
+
 Instance& ConstantEvaluator::EvaluateExpression(Expression* expression) {
-  expression->AcceptExpressionVisitor(this);
+  if (!GetCachedConstant(expression, &result_)) {
+    expression->AcceptExpressionVisitor(this);
+    CacheConstantValue(expression, result_);
+  }
   // We return a new `ZoneHandle` here on purpose: The intermediate language
   // instructions do not make a copy of the handle, so we do it.
   return dart::Instance::ZoneHandle(Z, result_.raw());
@@ -1249,7 +1241,10 @@ Object& ConstantEvaluator::EvaluateExpressionSafe(Expression* expression) {
 
 Instance& ConstantEvaluator::EvaluateConstructorInvocation(
     ConstructorInvocation* node) {
-  VisitConstructorInvocation(node);
+  if (!GetCachedConstant(node, &result_)) {
+    VisitConstructorInvocation(node);
+    CacheConstantValue(node, result_);
+  }
   // We return a new `ZoneHandle` here on purpose: The intermediate language
   // instructions do not make a copy of the handle, so we do it.
   return dart::Instance::ZoneHandle(Z, result_.raw());
@@ -1257,7 +1252,10 @@ Instance& ConstantEvaluator::EvaluateConstructorInvocation(
 
 
 Instance& ConstantEvaluator::EvaluateListLiteral(ListLiteral* node) {
-  VisitListLiteral(node);
+  if (!GetCachedConstant(node, &result_)) {
+    VisitListLiteral(node);
+    CacheConstantValue(node, result_);
+  }
   // We return a new `ZoneHandle` here on purpose: The intermediate language
   // instructions do not make a copy of the handle, so we do it.
   return dart::Instance::ZoneHandle(Z, result_.raw());
@@ -1265,7 +1263,10 @@ Instance& ConstantEvaluator::EvaluateListLiteral(ListLiteral* node) {
 
 
 Instance& ConstantEvaluator::EvaluateMapLiteral(MapLiteral* node) {
-  VisitMapLiteral(node);
+  if (!GetCachedConstant(node, &result_)) {
+    VisitMapLiteral(node);
+    CacheConstantValue(node, result_);
+  }
   // We return a new `ZoneHandle` here on purpose: The intermediate language
   // instructions do not make a copy of the handle, so we do it.
   return dart::Instance::ZoneHandle(Z, result_.raw());
@@ -1350,6 +1351,56 @@ RawObject* ConstantEvaluator::EvaluateConstConstructorCall(
     instance ^= result.raw();
   }
   return H.Canonicalize(instance);
+}
+
+
+bool ConstantEvaluator::GetCachedConstant(TreeNode* node, Instance* value) {
+  const Function& function = builder_->parsed_function_->function();
+  if (function.kind() == RawFunction::kImplicitStaticFinalGetter) {
+    // Don't cache constants in initializer expressions. They get
+    // evaluated only once.
+    return false;
+  }
+
+  bool is_present = false;
+  ASSERT(!script_.InVMHeap());
+  if (script_.compile_time_constants() == Array::null()) {
+    return false;
+  }
+  KernelConstantsMap constants(script_.compile_time_constants());
+  *value ^= constants.GetOrNull(node, &is_present);
+  // Mutator compiler thread may add constants while background compiler
+  // is running, and thus change the value of 'compile_time_constants';
+  // do not assert that 'compile_time_constants' has not changed.
+  constants.Release();
+  if (FLAG_compiler_stats && is_present) {
+    H.thread()->compiler_stats()->num_const_cache_hits++;
+  }
+  return is_present;
+}
+
+
+void ConstantEvaluator::CacheConstantValue(TreeNode* node,
+                                           const Instance& value) {
+  ASSERT(Thread::Current()->IsMutatorThread());
+
+  const Function& function = builder_->parsed_function_->function();
+  if (function.kind() == RawFunction::kImplicitStaticFinalGetter) {
+    // Don't cache constants in initializer expressions. They get
+    // evaluated only once.
+    return;
+  }
+  const intptr_t kInitialConstMapSize = 16;
+  ASSERT(!script_.InVMHeap());
+  if (script_.compile_time_constants() == Array::null()) {
+    const Array& array =
+        Array::Handle(HashTables::New<KernelConstantsMap>(kInitialConstMapSize,
+                                                          Heap::kNew));
+    script_.set_compile_time_constants(array);
+  }
+  KernelConstantsMap constants(script_.compile_time_constants());
+  constants.InsertNewOrGetValue(node, value);
+  script_.set_compile_time_constants(constants.Release());
 }
 
 
@@ -2347,31 +2398,54 @@ Fragment FlowGraphBuilder::StaticCall(const Function& target,
 Fragment FlowGraphBuilder::StoreIndexed(intptr_t class_id) {
   Value* value = Pop();
   Value* index = Pop();
-  // TODO(27590): Omit store barrier when possible (e.g., storing
-  // some constants).
+  const StoreBarrierType emit_store_barrier =
+      value->BindsToConstant()
+          ? kNoStoreBarrier
+          : kEmitStoreBarrier;
   StoreIndexedInstr* store = new (Z) StoreIndexedInstr(
       Pop(),  // Array.
-      index, value, kEmitStoreBarrier, Instance::ElementSizeFor(class_id),
+      index, value, emit_store_barrier, Instance::ElementSizeFor(class_id),
       class_id, kAlignedAccess, Thread::kNoDeoptId, TokenPosition::kNoSource);
   Push(store);
   return Fragment(store);
 }
 
 
-Fragment FlowGraphBuilder::StoreInstanceField(const dart::Field& field) {
+Fragment FlowGraphBuilder::StoreInstanceField(
+    const dart::Field& field, StoreBarrierType emit_store_barrier) {
   Value* value = Pop();
-  // TODO(27590): Omit store barrier when possible (e.g., storing
-  // some constants).
+  if (value->BindsToConstant()) {
+    emit_store_barrier = kNoStoreBarrier;
+  }
   StoreInstanceFieldInstr* store = new (Z) StoreInstanceFieldInstr(
-      field, Pop(), value, kEmitStoreBarrier, TokenPosition::kNoSource);
+      field, Pop(), value, emit_store_barrier, TokenPosition::kNoSource);
   return Fragment(store);
 }
 
 
-Fragment FlowGraphBuilder::StoreInstanceField(intptr_t offset) {
+Fragment FlowGraphBuilder::StoreInstanceFieldGuarded(const dart::Field& field) {
+  Fragment instructions;
+  if (FLAG_use_field_guards) {
+    LocalVariable* store_expression = MakeTemporary();
+    instructions += LoadLocal(store_expression);
+    instructions += GuardFieldClass(field, Thread::Current()->GetNextDeoptId());
+    instructions += LoadLocal(store_expression);
+    instructions +=
+        GuardFieldLength(field, Thread::Current()->GetNextDeoptId());
+  }
+  instructions += StoreInstanceField(field);
+  return instructions;
+}
+
+
+Fragment FlowGraphBuilder::StoreInstanceField(
+    intptr_t offset, StoreBarrierType emit_store_barrier) {
   Value* value = Pop();
+  if (value->BindsToConstant()) {
+    emit_store_barrier = kNoStoreBarrier;
+  }
   StoreInstanceFieldInstr* store = new (Z) StoreInstanceFieldInstr(
-      offset, Pop(), value, kEmitStoreBarrier, TokenPosition::kNoSource);
+      offset, Pop(), value, emit_store_barrier, TokenPosition::kNoSource);
   return Fragment(store);
 }
 
@@ -3041,8 +3115,8 @@ Fragment FlowGraphBuilder::NativeFunctionBody(FunctionNode* kernel_function,
       body += LoadLocal(scopes_->this_variable);
       body += LoadLocal(
           LookupVariable(kernel_function->positional_parameters()[0]));
-      // TODO(27590): This store does not need a store barrier.
-      body += StoreInstanceField(LinkedHashMap::hash_mask_offset());
+      body += StoreInstanceField(LinkedHashMap::hash_mask_offset(),
+                                 kNoStoreBarrier);
       body += NullConstant();
       break;
     case MethodRecognizer::kLinkedHashMap_getUsedData:
@@ -3054,8 +3128,8 @@ Fragment FlowGraphBuilder::NativeFunctionBody(FunctionNode* kernel_function,
       body += LoadLocal(scopes_->this_variable);
       body += LoadLocal(
           LookupVariable(kernel_function->positional_parameters()[0]));
-      // TODO(27590): This store does not need a store barrier.
-      body += StoreInstanceField(LinkedHashMap::used_data_offset());
+      body += StoreInstanceField(LinkedHashMap::used_data_offset(),
+                                 kNoStoreBarrier);
       body += NullConstant();
       break;
     case MethodRecognizer::kLinkedHashMap_getDeletedKeys:
@@ -3067,8 +3141,8 @@ Fragment FlowGraphBuilder::NativeFunctionBody(FunctionNode* kernel_function,
       body += LoadLocal(scopes_->this_variable);
       body += LoadLocal(
           LookupVariable(kernel_function->positional_parameters()[0]));
-      // TODO(27590): This store does not need a store barrier.
-      body += StoreInstanceField(LinkedHashMap::deleted_keys_offset());
+      body += StoreInstanceField(LinkedHashMap::deleted_keys_offset(),
+                                 kNoStoreBarrier);
       body += NullConstant();
       break;
     case MethodRecognizer::kBigint_getNeg:
@@ -3099,13 +3173,12 @@ FlowGraph* FlowGraphBuilder::BuildGraphOfFieldAccessor(
   graph_entry_ = new (Z)
       GraphEntryInstr(*parsed_function_, normal_entry, Compiler::kNoOSRDeoptId);
 
-  // TODO(27590): Add support for FLAG_use_field_guards.
   Fragment body(normal_entry);
   if (is_setter) {
     if (is_method) {
       body += LoadLocal(scopes_->this_variable);
       body += LoadLocal(setter_value);
-      body += StoreInstanceField(field);
+      body += StoreInstanceFieldGuarded(field);
     } else {
       body += LoadLocal(setter_value);
       body += StoreStaticField(field);
@@ -3190,6 +3263,18 @@ Fragment FlowGraphBuilder::BuildImplicitClosureCreation(
   fragment += StoreInstanceField(Context::variable_offset(0));
 
   return fragment;
+}
+
+
+Fragment FlowGraphBuilder::GuardFieldLength(const dart::Field& field,
+                                            intptr_t deopt_id) {
+  return Fragment(new (Z) GuardFieldLengthInstr(Pop(), field, deopt_id));
+}
+
+
+Fragment FlowGraphBuilder::GuardFieldClass(const dart::Field& field,
+                                           intptr_t deopt_id) {
+  return Fragment(new (Z) GuardFieldClassInstr(Pop(), field, deopt_id));
 }
 
 
@@ -3515,10 +3600,9 @@ Fragment FlowGraphBuilder::TranslateInitializers(
           dart::Field::ZoneHandle(Z, H.LookupFieldByKernelField(kernel_field));
 
       EnterScope(kernel_field);
-      // TODO(27590): Support FLAG_use_field_guards.
       instructions += LoadLocal(scopes_->this_variable);
       instructions += TranslateExpression(init);
-      instructions += StoreInstanceField(field);
+      instructions += StoreInstanceFieldGuarded(field);
       ExitScope(kernel_field);
     }
   }
@@ -3536,10 +3620,9 @@ Fragment FlowGraphBuilder::TranslateInitializers(
       dart::Field& field =
           dart::Field::ZoneHandle(Z, H.LookupFieldByKernelField(init->field()));
 
-      // TODO(27590): Support FLAG_use_field_guards.
       instructions += LoadLocal(scopes_->this_variable);
       instructions += TranslateExpression(init->value());
-      instructions += StoreInstanceField(field);
+      instructions += StoreInstanceFieldGuarded(field);
     } else if (initializer->IsSuperInitializer()) {
       SuperInitializer* init = SuperInitializer::Cast(initializer);
 
@@ -5495,6 +5578,9 @@ void FlowGraphBuilder::VisitYieldStatement(YieldStatement* node) {
     ASSERT(exception_var->name().raw() == Symbols::ExceptionParameter().raw());
     ASSERT(stack_trace_var->name().raw() ==
            Symbols::StackTraceParameter().raw());
+
+    exception_var->set_is_forced_stack();
+    stack_trace_var->set_is_forced_stack();
 
     TargetEntryInstr* no_error;
     TargetEntryInstr* error;
