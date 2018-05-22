@@ -20,6 +20,7 @@ export 'compiler_state.dart';
 export '../api_prototype/standard_file_system.dart' show StandardFileSystem;
 export '../fasta/fasta_codes.dart' show FormattedMessage;
 export '../fasta/severity.dart' show Severity;
+import '../fasta/kernel/utils.dart' show serializeComponent;
 
 Future<InitializedCompilerState> initializeCompiler(
     InitializedCompilerState oldState,
@@ -47,7 +48,9 @@ Future<InitializedCompilerState> initializeCompiler(
 }
 
 Future<List<int>> compile(InitializedCompilerState compilerState,
-    List<Uri> inputs, ProblemHandler problemHandler) async {
+    List<Uri> inputs, ProblemHandler problemHandler,
+    {bool summaryOnly}) async {
+  summaryOnly ??= true;
   CompilerOptions options = compilerState.options;
   options..onProblem = problemHandler;
 
@@ -56,6 +59,8 @@ Future<List<int>> compile(InitializedCompilerState compilerState,
   processedOpts.inputs.addAll(inputs);
 
   var result = await generateKernel(processedOpts,
-      buildSummary: true, buildComponent: false, truncateSummary: true);
-  return result?.summary;
+      buildSummary: summaryOnly,
+      buildComponent: !summaryOnly);
+
+  return summaryOnly ? result?.summary : serializeComponent(result?.component);
 }

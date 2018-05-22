@@ -14,10 +14,13 @@ import 'dart:io';
 
 import 'package:args/args.dart';
 import 'package:bazel_worker/bazel_worker.dart';
-import 'package:front_end/src/api_unstable/summary_worker.dart' as fe;
+import 'package:front_end/src/api_unstable/bazel_worker.dart' as fe;
 import 'package:front_end/src/multi_root_file_system.dart';
-import 'package:kernel/ast.dart' show Component, Library;
+import 'package:kernel/ast.dart' show Component, Library, Procedure;
 import 'package:kernel/target/targets.dart';
+import 'package:kernel/target/vm.dart';
+import 'package:kernel/class_hierarchy.dart';
+import 'package:kernel/core_types.dart';
 
 main(List<String> args) async {
   args = preprocessArgs(args);
@@ -27,22 +30,22 @@ main(List<String> args) async {
       throw new StateError(
           "unexpected args, expected only --persistent-worker but got: $args");
     }
-    await new SummaryWorker().run();
+    await new KernelWorker().run();
   } else {
-    var succeeded = await computeSummary(args);
+    var succeeded = await computeKernel(args);
     if (!succeeded) {
       exitCode = 15;
     }
   }
 }
 
-/// A bazel worker loop that can compute summaries.
-class SummaryWorker extends AsyncWorkerLoop {
+/// A bazel worker loop that can compute full or summary kernel files.
+class KernelWorker extends AsyncWorkerLoop {
   Future<WorkResponse> performRequest(WorkRequest request) async {
     var outputBuffer = new StringBuffer();
     var response = new WorkResponse()..exitCode = 0;
     try {
-      var succeeded = await computeSummary(request.arguments,
+      var succeeded = await computeKernel(request.arguments,
           isWorker: true, outputBuffer: outputBuffer);
       if (!succeeded) {
         response.exitCode = 15;
@@ -87,15 +90,19 @@ final summaryArgsParser = new ArgParser()
       negatable: false,
       help: 'Whether source files loaded implicitly should be included as '
           'part of the summary.')
+  ..addFlag('summary-only',
+      defaultsTo: true,
+      negatable: true,
+      help: 'Whether to only build summary files.')
   ..addOption('dart-sdk-summary')
-  ..addOption('input-summary', allowMultiple: true)
-  ..addOption('multi-root', allowMultiple: true)
+  ..addMultiOption('input-summary')
+  ..addMultiOption('multi-root')
   ..addOption('multi-root-scheme', defaultsTo: 'org-dartlang-multi-root')
   ..addOption('packages-file')
-  ..addOption('source', allowMultiple: true)
+  ..addMultiOption('source')
   ..addOption('output');
 
-/// Computes a kernel summary based on [args].
+/// Computes a kernel file based on [args].
 ///
 /// If [isWorker] is true then exit codes will not be set on failure.
 ///
@@ -103,14 +110,16 @@ final summaryArgsParser = new ArgParser()
 /// instead of printed to the console.
 ///
 /// Returns whether or not the summary was successfully output.
-Future<bool> computeSummary(List<String> args,
+Future<bool> computeKernel(List<String> args,
     {bool isWorker: false, StringBuffer outputBuffer}) async {
+  dynamic out = outputBuffer ?? stderr;
   bool succeeded = true;
   var parsedArgs = summaryArgsParser.parse(args);
 
   if (parsedArgs['help']) {
-    print(summaryArgsParser.usage);
-    exit(0);
+    out.writeln(summaryArgsParser.usage);
+    if (!isWorker) exit(0);
+    return false;
   }
 
   // Bazel creates an overlay file system where some files may be located in the
@@ -121,39 +130,68 @@ Future<bool> computeSummary(List<String> args,
   var fileSystem = new MultiRootFileSystem(parsedArgs['multi-root-scheme'],
       multiRoots, fe.StandardFileSystem.instance);
   var sources = parsedArgs['source'].map(Uri.parse).toList();
+  Target target;
+  var summaryOnly = parsedArgs['summary-only'] as bool;
+  var excludeNonSources = parsedArgs['exclude-non-sources'] as bool;
+  if (summaryOnly) {
+    target = new SummaryTarget(
+        sources, excludeNonSources, new TargetFlags(strongMode: true));
+  } else {
+    target = new FilteredVmTarget(
+        sources, excludeNonSources, new TargetFlags(strongMode: true));
+  }
   var state = await fe.initializeCompiler(
       // TODO(sigmund): pass an old state once we can make use of it.
       null,
       Uri.base.resolve(parsedArgs['dart-sdk-summary']),
       Uri.base.resolve(parsedArgs['packages-file']),
       parsedArgs['input-summary'].map(Uri.base.resolve).toList(),
-      new SummaryTarget(sources, parsedArgs['exclude-non-sources'],
-          new TargetFlags(strongMode: true)),
+      target,
       fileSystem);
 
   void onProblem(fe.FormattedMessage message, severity,
       List<fe.FormattedMessage> context) {
-    dynamic out = outputBuffer ?? stderr;
-    out.println(message.formatted);
+    out.writeln(message.formatted);
     for (fe.FormattedMessage message in context) {
-      out.println(message.formatted);
+      out.writeln(message.formatted);
     }
     if (severity != fe.Severity.nit) {
       succeeded = false;
     }
   }
 
-  var summary = await fe.compile(state, sources, onProblem);
+  var kernel =
+      await fe.compile(state, sources, onProblem, summaryOnly: summaryOnly);
 
-  if (summary != null) {
+  if (kernel != null) {
     var outputFile = new File(parsedArgs['output']);
     outputFile.createSync(recursive: true);
-    outputFile.writeAsBytesSync(summary);
+    outputFile.writeAsBytesSync(kernel);
   } else {
     assert(!succeeded);
   }
 
   return succeeded;
+}
+
+class FilteredVmTarget extends VmTarget {
+  final List<Uri> sources;
+  final bool excludeNonSources;
+
+  FilteredVmTarget(this.sources, this.excludeNonSources, TargetFlags flags)
+      : super(flags);
+
+  @override
+  void performModularTransformationsOnComponent(
+      CoreTypes coreTypes, ClassHierarchy hierarchy, Component component,
+      {void Function(String msg) logger}) {
+    super.performModularTransformationsOnComponent(
+        coreTypes, hierarchy, component,
+        logger: logger);
+
+    if (!excludeNonSources) return;
+    filterComponentToSources(component, sources);
+  }
 }
 
 /// A target that transforms outlines to meet the requirements of summaries in
@@ -178,21 +216,24 @@ class SummaryTarget extends NoneTarget {
   @override
   void performOutlineTransformations(Component component) {
     if (!excludeNonSources) return;
+    filterComponentToSources(component, sources);
+  }
+}
 
-    List<Library> libraries = new List.from(component.libraries);
-    component.libraries.clear();
-    Set<Uri> include = sources.toSet();
-    for (var lib in libraries) {
-      if (include.contains(lib.importUri)) {
-        component.libraries.add(lib);
-      } else {
-        // Excluding the library also means that their canonical names will not
-        // be computed as part of serialization, so we need to do that
-        // preemtively here to avoid errors when serializing references to
-        // elements of these libraries.
-        component.root.getChildFromUri(lib.importUri).bindTo(lib.reference);
-        lib.computeCanonicalNames();
-      }
+void filterComponentToSources(Component component, List<Uri> sources) {
+  List<Library> libraries = new List.from(component.libraries);
+  component.libraries.clear();
+  Set<Uri> include = sources.toSet();
+  for (var lib in libraries) {
+    if (include.contains(lib.importUri)) {
+      component.libraries.add(lib);
+    } else {
+      // Excluding the library also means that their canonical names will not
+      // be computed as part of serialization, so we need to do that
+      // preemtively here to avoid errors when serializing references to
+      // elements of these libraries.
+      component.root.getChildFromUri(lib.importUri).bindTo(lib.reference);
+      lib.computeCanonicalNames();
     }
   }
 }
