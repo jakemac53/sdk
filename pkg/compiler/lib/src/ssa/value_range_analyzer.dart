@@ -5,7 +5,7 @@
 import '../constant_system_dart.dart';
 import '../constants/constant_system.dart';
 import '../constants/values.dart';
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'nodes.dart';
 import 'optimize.dart';
 
@@ -16,11 +16,11 @@ class ValueRangeInfo {
   IntValue intOne;
 
   ValueRangeInfo(this.constantSystem) {
-    intZero = newIntValue(0);
-    intOne = newIntValue(1);
+    intZero = newIntValue(BigInt.zero);
+    intOne = newIntValue(BigInt.one);
   }
 
-  Value newIntValue(int value) {
+  Value newIntValue(BigInt value) {
     return new IntValue(value, this);
   }
 
@@ -128,7 +128,7 @@ class MarkerValue extends Value {
  * An [IntValue] contains a constant integer value.
  */
 class IntValue extends Value {
-  final int value;
+  final BigInt value;
 
   const IntValue(this.value, info) : super(info);
 
@@ -187,9 +187,9 @@ class IntValue extends Value {
   int get hashCode => throw new UnsupportedError('IntValue.hashCode');
 
   String toString() => 'IntValue $value';
-  bool get isNegative => value < 0;
-  bool get isPositive => value >= 0;
-  bool get isZero => value == 0;
+  bool get isNegative => value < BigInt.zero;
+  bool get isPositive => value >= BigInt.zero;
+  bool get isZero => value == BigInt.zero;
 }
 
 /**
@@ -600,13 +600,13 @@ class SsaValueRangeAnalyzer extends HBaseVisitor implements OptimizationPhase {
    */
   final Map<HInstruction, Range> ranges = new Map<HInstruction, Range>();
 
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
   final ValueRangeInfo info;
   final SsaOptimizerTask optimizer;
 
   HGraph graph;
 
-  SsaValueRangeAnalyzer(ClosedWorld closedWorld, this.optimizer)
+  SsaValueRangeAnalyzer(JClosedWorld closedWorld, this.optimizer)
       : info = new ValueRangeInfo(closedWorld.constantSystem),
         this.closedWorld = closedWorld;
 
@@ -694,11 +694,13 @@ class SsaValueRangeAnalyzer extends HBaseVisitor implements OptimizationPhase {
     if (constantNum.isPositiveInfinity || constantNum.isNegativeInfinity) {
       return info.newUnboundRange();
     }
-    if (constantNum.isMinusZero) constantNum = new IntConstantValue(0);
+    if (constantNum.isMinusZero) {
+      constantNum = new IntConstantValue(BigInt.zero);
+    }
 
-    int intValue = constantNum is IntConstantValue
+    BigInt intValue = constantNum is IntConstantValue
         ? constantNum.intValue
-        : constantNum.doubleValue.toInt();
+        : new BigInt.from(constantNum.doubleValue.toInt());
     Value value = info.newIntValue(intValue);
     return info.newNormalizedRange(value, value);
   }
@@ -1062,7 +1064,7 @@ class SsaValueRangeAnalyzer extends HBaseVisitor implements OptimizationPhase {
  * Tries to find a range for the update instruction of a loop phi.
  */
 class LoopUpdateRecognizer extends HBaseVisitor {
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
   final Map<HInstruction, Range> ranges;
   final ValueRangeInfo info;
   LoopUpdateRecognizer(this.closedWorld, this.ranges, this.info);

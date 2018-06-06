@@ -20,14 +20,12 @@ import '../js_backend/namer.dart';
 import '../js_backend/native_data.dart';
 import '../js_backend/js_interop_analysis.dart';
 import '../js_backend/interceptor_data.dart';
-import '../js_backend/mirrors_data.dart';
 import '../js_backend/runtime_types.dart';
 import '../js_emitter/code_emitter_task.dart';
 import '../options.dart';
-import '../resolution/tree_elements.dart';
 import '../types/abstract_value_domain.dart';
 import '../types/types.dart';
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'jump_handler.dart';
 import 'locals_handler.dart';
 import 'nodes.dart';
@@ -50,20 +48,15 @@ abstract class GraphBuilder {
   /// breaks.
   bool inTryStatement = false;
 
-  /// The tree elements for the element being built into an SSA graph.
-  TreeElements get elements;
-
   /// The JavaScript backend we are targeting in this compilation.
   JavaScriptBackend get backend;
 
   CodegenRegistry get registry;
 
-  ClosedWorld get closedWorld;
+  JClosedWorld get closedWorld;
 
   AbstractValueDomain get abstractValueDomain =>
       closedWorld.abstractValueDomain;
-
-  CommonMasks get commonMasks => closedWorld.abstractValueDomain;
 
   DiagnosticReporter get reporter => backend.reporter;
 
@@ -96,8 +89,6 @@ abstract class GraphBuilder {
   RuntimeTypesEncoder get rtiEncoder => backend.rtiEncoder;
 
   FunctionInlineCache get inlineCache => backend.inlineCache;
-
-  MirrorsData get mirrorsData => backend.mirrorsData;
 
   JsInteropAnalysis get jsInteropAnalysis => backend.jsInteropAnalysis;
 
@@ -139,7 +130,7 @@ abstract class GraphBuilder {
   /// Pushes a boolean checking [expression] against null.
   pushCheckNull(HInstruction expression) {
     push(new HIdentity(expression, graph.addConstantNull(closedWorld), null,
-        closedWorld.abstractValueDomain.boolType));
+        abstractValueDomain.boolType));
   }
 
   void dup() {
@@ -223,7 +214,7 @@ abstract class GraphBuilder {
     current.add(instruction);
   }
 
-  HParameterValue addParameter(Entity parameter, TypeMask type) {
+  HParameterValue addParameter(Entity parameter, AbstractValue type) {
     HParameterValue result = new HParameterValue(parameter, type);
     if (lastAddedParameter == null) {
       graph.entry.addBefore(graph.entry.first, result);
@@ -250,7 +241,7 @@ abstract class GraphBuilder {
   MemberEntity get sourceElement;
 
   HLiteralList buildLiteralList(List<HInstruction> inputs) {
-    return new HLiteralList(inputs, commonMasks.growableListType);
+    return new HLiteralList(inputs, abstractValueDomain.growableListType);
   }
 
   HInstruction callSetRuntimeTypeInfoWithTypeArguments(
@@ -266,7 +257,7 @@ abstract class GraphBuilder {
         TypeInfoExpressionKind.INSTANCE,
         closedWorld.elementEnvironment.getThisType(type.element),
         rtiInputs,
-        closedWorld.abstractValueDomain.dynamicType);
+        abstractValueDomain.dynamicType);
     add(typeInfo);
     return callSetRuntimeTypeInfo(typeInfo, newObject, sourceInformation);
   }
@@ -298,7 +289,7 @@ abstract class GraphBuilder {
   bool getFlagValue(String flagName) {
     switch (flagName) {
       case 'MUST_RETAIN_METADATA':
-        return mirrorsData.mustRetainMetadata;
+        return false;
       case 'USE_CONTENT_SECURITY_POLICY':
         return options.useContentSecurityPolicy;
       case 'IS_FULL_EMITTER':

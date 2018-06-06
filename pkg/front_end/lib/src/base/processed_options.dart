@@ -104,18 +104,18 @@ class ProcessedOptions {
 
   /// The SDK summary, or `null` if it has not been read yet.
   ///
-  /// A summary, also referred to as "outline" internally, is a [Component] where
-  /// all method bodies are left out. In essence, it contains just API
-  /// signatures and constants. When strong-mode is enabled, the summary already
-  /// includes inferred types.
+  /// A summary, also referred to as "outline" internally, is a [Component]
+  /// where all method bodies are left out. In essence, it contains just API
+  /// signatures and constants. When strong-mode is enabled, the summary
+  /// already includes inferred types.
   Component _sdkSummaryComponent;
 
   /// The summary for each uri in `options.inputSummaries`.
   ///
-  /// A summary, also referred to as "outline" internally, is a [Component] where
-  /// all method bodies are left out. In essence, it contains just API
-  /// signatures and constants. When strong-mode is enabled, the summary already
-  /// includes inferred types.
+  /// A summary, also referred to as "outline" internally, is a [Component]
+  /// where all method bodies are left out. In essence, it contains just API
+  /// signatures and constants. When strong-mode is enabled, the summary
+  /// already includes inferred types.
   List<Component> _inputSummariesComponents;
 
   /// Other components that are meant to be linked and compiled with the input
@@ -172,15 +172,6 @@ class ProcessedOptions {
 
   bool get throwOnNitsForDebugging => _raw.throwOnNitsForDebugging;
 
-  /// Like [CompilerOptions.chaseDependencies] but with the appropriate default
-  /// value filled in.
-  bool get chaseDependencies => _raw.chaseDependencies ?? !_modularApi;
-
-  /// Whether the compiler was invoked with a modular API.
-  ///
-  /// Used to determine the default behavior for [chaseDependencies].
-  final bool _modularApi;
-
   /// The entry-points provided to the compiler.
   final List<Uri> inputs;
 
@@ -189,7 +180,7 @@ class ProcessedOptions {
 
   /// Initializes a [ProcessedOptions] object wrapping the given [rawOptions].
   ProcessedOptions(CompilerOptions rawOptions,
-      [this._modularApi = false, this.inputs = const [], this.output])
+      [this.inputs = const [], this.output])
       : this._raw = rawOptions,
         // TODO(sigmund, ahe): create ticker even earlier or pass in a stopwatch
         // collecting time since the start of the VM.
@@ -596,31 +587,8 @@ class ProcessedOptions {
   }
 
   /// Create a [FileSystem] specific to the current options.
-  ///
-  /// If [chaseDependencies] is false, the resulting file system will be
-  /// hermetic.
   FileSystem _createFileSystem() {
-    var result = _raw.fileSystem;
-    if (!chaseDependencies) {
-      var allInputs = inputs.toSet();
-      allInputs.addAll(_raw.inputSummaries);
-      allInputs.addAll(_raw.linkedDependencies);
-
-      if (sdkSummary != null) allInputs.add(sdkSummary);
-
-      if (_raw.sdkRoot != null) {
-        // TODO(sigmund): refine this, we should be more explicit about when
-        // sdkRoot and libraries.json are allowed to be used.
-        allInputs.add(sdkRoot);
-        allInputs.add(sdkRoot.resolve("lib/libraries.json"));
-      }
-
-      /// Note: Searching the file-system for the package-config is not
-      /// supported in hermetic builds.
-      if (_raw.packagesFileUri != null) allInputs.add(_raw.packagesFileUri);
-      result = new HermeticFileSystem(allInputs, result);
-    }
-    return result;
+    return _raw.fileSystem;
   }
 
   String debugString() {
@@ -648,9 +616,6 @@ class ProcessedOptions {
     writeList('Input Summaries', _raw.inputSummaries);
     writeList('Linked Dependencies', _raw.linkedDependencies);
 
-    sb.writeln('Modular: ${_modularApi}');
-    sb.writeln('Hermetic: ${!chaseDependencies} (provided: '
-        '${_raw.chaseDependencies == null ? null : !_raw.chaseDependencies})');
     sb.writeln('Packages uri: ${_raw.packagesFileUri}');
     sb.writeln('Packages: ${_packages}');
 

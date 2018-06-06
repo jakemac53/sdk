@@ -674,7 +674,7 @@ void ActivationFrame::PrintDescriptorsError(const char* message) {
   DisassembleToStdout formatter;
   code().Disassemble(&formatter);
   PcDescriptors::Handle(code().pc_descriptors()).Print();
-  StackFrameIterator frames(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator frames(ValidationPolicy::kDontValidateFrames,
                             Thread::Current(),
                             StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = frames.NextFrame();
@@ -752,15 +752,26 @@ RawObject* ActivationFrame::GetAsyncCompleter() {
 }
 
 RawObject* ActivationFrame::GetAsyncCompleterAwaiter(const Object& completer) {
-  const Class& sync_completer_cls = Class::Handle(completer.clazz());
-  ASSERT(!sync_completer_cls.IsNull());
-  const Class& completer_cls = Class::Handle(sync_completer_cls.SuperClass());
-  const Field& future_field =
-      Field::Handle(completer_cls.LookupInstanceFieldAllowPrivate(
-          Symbols::CompleterFuture()));
-  ASSERT(!future_field.IsNull());
   Instance& future = Instance::Handle();
-  future ^= Instance::Cast(completer).GetField(future_field);
+  if (FLAG_sync_async) {
+    const Class& completer_cls = Class::Handle(completer.clazz());
+    ASSERT(!completer_cls.IsNull());
+    const Function& future_getter = Function::Handle(
+        completer_cls.LookupGetterFunction(Symbols::CompleterFuture()));
+    ASSERT(!future_getter.IsNull());
+    const Array& args = Array::Handle(Array::New(1));
+    args.SetAt(0, Instance::Cast(completer));
+    future ^= DartEntry::InvokeFunction(future_getter, args);
+  } else {
+    const Class& sync_completer_cls = Class::Handle(completer.clazz());
+    ASSERT(!sync_completer_cls.IsNull());
+    const Class& completer_cls = Class::Handle(sync_completer_cls.SuperClass());
+    const Field& future_field =
+        Field::Handle(completer_cls.LookupInstanceFieldAllowPrivate(
+            Symbols::CompleterFuture()));
+    ASSERT(!future_field.IsNull());
+    future ^= Instance::Cast(completer).GetField(future_field);
+  }
   if (future.IsNull()) {
     // The completer object may not be fully initialized yet.
     return Object::null();
@@ -855,11 +866,18 @@ bool ActivationFrame::HandlesException(const Instance& exc_obj) {
 
 void ActivationFrame::ExtractTokenPositionFromAsyncClosure() {
   // Attempt to determine the token position from the async closure.
+  Thread* thread = Thread::Current();
+  Zone* zone = thread->zone();
+  const Script& script = Script::Handle(zone, function().script());
+
   ASSERT(function_.IsAsyncGenClosure() || function_.IsAsyncClosure());
   // This should only be called on frames that aren't active on the stack.
   ASSERT(fp() == 0);
+
   const Array& await_to_token_map =
-      Array::Handle(code_.await_token_positions());
+      Array::Handle(zone, script.kind() == RawScript::kKernelTag
+                              ? script.yield_positions()
+                              : code_.await_token_positions());
   if (await_to_token_map.IsNull()) {
     // No mapping.
     return;
@@ -883,9 +901,15 @@ void ActivationFrame::ExtractTokenPositionFromAsyncClosure() {
   if (await_jump_var < 0) {
     return;
   }
-  ASSERT(await_jump_var < await_to_token_map.Length());
+  intptr_t await_to_token_map_index =
+      script.kind() == RawScript::kKernelTag
+          ? await_jump_var - 1
+          :
+          // source script tokens array has first element duplicated
+          await_jump_var;
+  ASSERT(await_to_token_map_index < await_to_token_map.Length());
   const Object& token_pos =
-      Object::Handle(await_to_token_map.At(await_jump_var));
+      Object::Handle(await_to_token_map.At(await_to_token_map_index));
   if (token_pos.IsNull()) {
     return;
   }
@@ -1150,7 +1174,7 @@ void ActivationFrame::PrintContextMismatchError(intptr_t ctx_slot,
   OS::PrintErr(
       "-------------------------\n"
       "All frames...\n\n");
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = iterator.NextFrame();
@@ -1266,6 +1290,8 @@ RawObject* ActivationFrame::Evaluate(const String& expr,
                                      const GrowableObjectArray& param_names,
                                      const GrowableObjectArray& param_values) {
   GetDescIndices();
+  bool type_arguments_available = false;
+  TypeArguments& type_arguments = TypeArguments::Handle();
   String& name = String::Handle();
   String& existing_name = String::Handle();
   Object& value = Instance::Handle();
@@ -1273,7 +1299,11 @@ RawObject* ActivationFrame::Evaluate(const String& expr,
   for (intptr_t i = 0; i < num_variables; i++) {
     TokenPosition ignore;
     VariableAt(i, &name, &ignore, &ignore, &ignore, &value);
-    if (!name.Equals(Symbols::This()) && !IsSyntheticVariableName(name)) {
+    if (name.Equals(Symbols::FunctionTypeArgumentsVar())) {
+      type_arguments_available = true;
+      type_arguments = TypeArguments::RawCast(value.raw());
+    } else if (!name.Equals(Symbols::This()) &&
+               !IsSyntheticVariableName(name)) {
       if (IsPrivateVariableName(name)) {
         name = String::ScrubName(name);
       }
@@ -1295,11 +1325,44 @@ RawObject* ActivationFrame::Evaluate(const String& expr,
     }
   }
 
+  Array& type_param_names = Array::Handle();
+  if ((function().IsGeneric() || function().HasGenericParent()) &&
+      type_arguments_available) {
+    intptr_t num_vars =
+        function().NumTypeParameters() + function().NumParentTypeParameters();
+    type_param_names = Array::New(num_vars);
+    TypeArguments& type_params = TypeArguments::Handle();
+    TypeParameter& type_param = TypeParameter::Handle();
+    String& name = String::Handle();
+    Function& current = Function::Handle(function().raw());
+    for (intptr_t i = 0; !current.IsNull(); i += current.NumTypeParameters(),
+                  current = current.parent_function()) {
+      type_params = current.type_parameters();
+      for (intptr_t j = 0; j < current.NumTypeParameters(); ++j) {
+        type_param = TypeParameter::RawCast(type_params.TypeAt(j));
+        name = type_param.Name();
+        // Write the names in backwards so they match up with the order of the
+        // types in 'type_arguments'.
+        type_param_names.SetAt(num_vars - (i + j) - 1, name);
+      }
+    }
+    if (type_arguments.IsNull()) {
+      type_arguments = TypeArguments::New(num_vars);
+      for (intptr_t i = 0; i < num_vars; ++i) {
+        type_arguments.SetTypeAt(i, Object::dynamic_type());
+      }
+    }
+    ASSERT(type_arguments.Length() == num_vars);
+  } else {
+    type_param_names = Object::empty_array().raw();
+  }
+
   if (function().is_static()) {
     const Class& cls = Class::Handle(function().Owner());
     return cls.Evaluate(expr,
                         Array::Handle(Array::MakeFixedLength(param_names)),
-                        Array::Handle(Array::MakeFixedLength(param_values)));
+                        Array::Handle(Array::MakeFixedLength(param_values)),
+                        type_param_names, type_arguments);
   } else {
     const Object& receiver = Object::Handle(GetReceiver());
     const Class& method_cls = Class::Handle(function().origin());
@@ -1310,7 +1373,8 @@ RawObject* ActivationFrame::Evaluate(const String& expr,
     const Instance& inst = Instance::Cast(receiver);
     return inst.Evaluate(method_cls, expr,
                          Array::Handle(Array::MakeFixedLength(param_names)),
-                         Array::Handle(Array::MakeFixedLength(param_values)));
+                         Array::Handle(Array::MakeFixedLength(param_values)),
+                         type_param_names, type_arguments);
   }
   UNREACHABLE();
   return Object::null();
@@ -1808,7 +1872,7 @@ DebuggerStackTrace* Debugger::CollectStackTrace() {
   Zone* zone = thread->zone();
   Isolate* isolate = thread->isolate();
   DebuggerStackTrace* stack_trace = new DebuggerStackTrace(8);
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   Code& code = Code::Handle(zone);
@@ -1897,7 +1961,7 @@ DebuggerStackTrace* Debugger::CollectAsyncCausalStackTrace() {
   // asynchronous function. We truncate the remainder of the synchronous
   // stack trace because it contains activations that are part of the
   // asynchronous dispatch mechanisms.
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = iterator.NextFrame();
@@ -1964,7 +2028,7 @@ DebuggerStackTrace* Debugger::CollectAwaiterReturnStackTrace() {
   Isolate* isolate = thread->isolate();
   DebuggerStackTrace* stack_trace = new DebuggerStackTrace(8);
 
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
 
@@ -1977,12 +2041,36 @@ DebuggerStackTrace* Debugger::CollectAwaiterReturnStackTrace() {
   Array& deopt_frame = Array::Handle(zone);
   class StackTrace& async_stack_trace = StackTrace::Handle(zone);
   bool stack_has_async_function = false;
+
+  // Number of frames we are trying to skip that form "sync async" entry.
+  int skipSyncAsyncFramesCount = -1;
+  String& function_name = String::Handle(zone);
   for (StackFrame* frame = iterator.NextFrame(); frame != NULL;
        frame = iterator.NextFrame()) {
     ASSERT(frame->IsValid());
     if (FLAG_trace_debugger_stacktrace) {
-      OS::PrintErr("CollectStackTrace: visiting frame:\n\t%s\n",
+      OS::PrintErr("CollectAwaiterReturnStackTrace: visiting frame:\n\t%s\n",
                    frame->ToCString());
+    }
+    if (skipSyncAsyncFramesCount >= 0) {
+      if (!frame->IsDartFrame()) {
+        break;
+      }
+      // Assume that the code we are looking for is not inlined.
+      code = frame->LookupDartCode();
+      function = code.function();
+      function_name ^= function.QualifiedScrubbedName();
+      if (skipSyncAsyncFramesCount == 2) {
+        if (!function_name.Equals(Symbols::_ClosureCall())) {
+          break;
+        }
+      } else if (skipSyncAsyncFramesCount == 1) {
+        if (!function_name.Equals(Symbols::_AsyncAwaitCompleterStart())) {
+          break;
+        }
+      }
+
+      skipSyncAsyncFramesCount--;
     }
     if (frame->IsDartFrame()) {
       code = frame->LookupDartCode();
@@ -1995,8 +2083,10 @@ DebuggerStackTrace* Debugger::CollectAwaiterReturnStackTrace() {
           function = it.function();
           if (FLAG_trace_debugger_stacktrace) {
             ASSERT(!function.IsNull());
-            OS::PrintErr("CollectStackTrace: visiting inlined function: %s\n",
-                         function.ToFullyQualifiedCString());
+            OS::PrintErr(
+                "CollectAwaiterReturnStackTrace: visiting inlined function: "
+                "%s\n",
+                function.ToFullyQualifiedCString());
           }
           intptr_t deopt_frame_offset = it.GetDeoptFpOffset();
           if (function.IsAsyncClosure() || function.IsAsyncGenClosure()) {
@@ -2032,7 +2122,16 @@ DebuggerStackTrace* Debugger::CollectAwaiterReturnStackTrace() {
           // Grab the awaiter.
           async_activation ^= activation->GetAsyncAwaiter();
           async_stack_trace ^= activation->GetCausalStack();
-          break;
+          if (FLAG_sync_async) {
+            // async function might have been called synchronously, in which
+            // case we need to keep going down the stack.
+            // To determine how we are called we peek few more frames further
+            // expecting to see Closure_call followed by
+            // AsyncAwaitCompleter_start.
+            skipSyncAsyncFramesCount = 2;
+          } else {
+            break;
+          }
         } else {
           stack_trace->AddActivation(CollectDartFrame(
               isolate, frame->pc(), frame, code, Object::null_array(), 0));
@@ -2100,7 +2199,7 @@ DebuggerStackTrace* Debugger::CollectAwaiterReturnStackTrace() {
 }
 
 ActivationFrame* Debugger::TopDartFrame() const {
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = iterator.NextFrame();
@@ -3341,7 +3440,7 @@ void Debugger::HandleSteppingRequest(DebuggerStackTrace* stack_trace,
       OS::PrintErr(
           "-------------------------\n"
           "All frames...\n\n");
-      StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+      StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                                   Thread::Current(),
                                   StackFrameIterator::kNoCrossThreadIteration);
       StackFrame* frame = iterator.NextFrame();
@@ -3459,7 +3558,7 @@ void Debugger::RewindToFrame(intptr_t frame_index) {
   Function& function = Function::Handle(zone);
 
   // Find the requested frame.
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   intptr_t current_frame = 0;
@@ -3560,7 +3659,7 @@ void Debugger::RewindPostDeopt() {
     OS::PrintErr(
         "-------------------------\n"
         "All frames...\n\n");
-    StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+    StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                                 Thread::Current(),
                                 StackFrameIterator::kNoCrossThreadIteration);
     StackFrame* frame = iterator.NextFrame();
@@ -3575,7 +3674,7 @@ void Debugger::RewindPostDeopt() {
   Zone* zone = thread->zone();
   Code& code = Code::Handle(zone);
 
-  StackFrameIterator iterator(StackFrameIterator::kDontValidateFrames,
+  StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
                               Thread::Current(),
                               StackFrameIterator::kNoCrossThreadIteration);
   intptr_t current_frame = 0;

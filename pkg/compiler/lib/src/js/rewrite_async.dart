@@ -415,6 +415,9 @@ abstract class AsyncRewriterBase extends js.NodeVisitor {
     // Note that RegExes, js.ArrayInitializer and js.ObjectInitializer are not
     // [js.Literal]s.
     if (result is js.Literal) return result;
+    if (result is js.VariableUse) {
+      if (result.name == selfName) return result;
+    }
 
     js.Expression tempVar = useTempVar(allocateTempVar());
     addStatement(js.js.statement('# = #;', [tempVar, result]));
@@ -519,7 +522,8 @@ abstract class AsyncRewriterBase extends js.NodeVisitor {
     List<js.Node> visited = nodes.take(lastTransformIndex).map((js.Node node) {
       return (node == null) ? null : _storeIfNecessary(visitExpression(node));
     }).toList();
-    visited.addAll(nodes.skip(lastTransformIndex).map((js.Node node) {
+    visited.addAll(
+        nodes.skip(lastTransformIndex).map<js.Expression>((js.Node node) {
       return (node == null) ? null : visitExpression(node);
     }));
     var result = fn(visited);

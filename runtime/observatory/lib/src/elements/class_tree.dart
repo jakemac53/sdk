@@ -143,7 +143,7 @@ class ClassTreeElement extends HtmlElement implements Renderable {
           });
   }
 
-  static Element _create(toggle) {
+  static HtmlElement _create(toggle) {
     return new DivElement()
       ..classes = ['class-tree-item']
       ..children = [
@@ -188,7 +188,8 @@ class ClassTreeElement extends HtmlElement implements Renderable {
     return children;
   }
 
-  Iterable<M.Class> _children(M.Class cls) {
+  Iterable<M.Class> _children(classDynamic) {
+    M.Class cls = classDynamic;
     return _subclasses[cls.id];
   }
 }

@@ -11,7 +11,6 @@ import 'package:analysis_server/src/services/completion/dart/completion_manager.
     show DartCompletionRequestImpl;
 import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/generated/parser.dart' as analyzer;
-import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:test/test.dart';
 
@@ -26,7 +25,6 @@ int suggestionComparator(CompletionSuggestion s1, CompletionSuggestion s2) {
 abstract class DartCompletionContributorTest extends AbstractContextTest {
   static const String _UNCHECKED = '__UNCHECKED__';
   String testFile;
-  Source testSource;
   int completionOffset;
   int replacementOffset;
   int replacementLength;
@@ -47,7 +45,7 @@ abstract class DartCompletionContributorTest extends AbstractContextTest {
    * Return `true` if contributors should suggest constructors in contexts where
    * there is no `new` or `const` keyword.
    */
-  bool get suggestConstructorsWithoutNew => false;
+  bool get suggestConstructorsWithoutNew => true;
 
   bool get usingFastaParser => analyzer.Parser.useFasta;
 
@@ -59,7 +57,7 @@ abstract class DartCompletionContributorTest extends AbstractContextTest {
     expect(nextOffset, equals(-1), reason: 'too many ^');
     content = content.substring(0, completionOffset) +
         content.substring(completionOffset + 1);
-    testSource = addSource(testFile, content);
+    addSource(testFile, content);
   }
 
   void assertHasNoParameterInfo(CompletionSuggestion suggestion) {
@@ -473,40 +471,18 @@ abstract class DartCompletionContributorTest extends AbstractContextTest {
   Future computeSuggestions({int times = 200}) async {
     AnalysisResult analysisResult =
         await driver.getResult(convertPath(testFile));
-    testSource = analysisResult.unit.element.source;
     CompletionRequestImpl baseRequest = new CompletionRequestImpl(
-        analysisResult,
-        resourceProvider,
-        testSource,
-        completionOffset,
-        new CompletionPerformance());
+        analysisResult, completionOffset, new CompletionPerformance());
 
     // Build the request
-    Completer<DartCompletionRequest> requestCompleter =
-        new Completer<DartCompletionRequest>();
-    DartCompletionRequestImpl
-        .from(baseRequest)
-        .then((DartCompletionRequest request) {
-      requestCompleter.complete(request);
-    });
-    request = await performAnalysis(times, requestCompleter);
+    var request = await DartCompletionRequestImpl.from(baseRequest);
 
     var range = request.target.computeReplacementRange(request.offset);
     replacementOffset = range.offset;
     replacementLength = range.length;
-    Completer<List<CompletionSuggestion>> suggestionCompleter =
-        new Completer<List<CompletionSuggestion>>();
 
     // Request completions
-    contributor
-        .computeSuggestions(request)
-        .then((List<CompletionSuggestion> computedSuggestions) {
-      suggestionCompleter.complete(computedSuggestions);
-    });
-
-    // Perform analysis until the suggestions have been computed
-    // or the max analysis cycles ([times]) has been reached
-    suggestions = await performAnalysis(times, suggestionCompleter);
+    suggestions = await contributor.computeSuggestions(request);
     expect(suggestions, isNotNull, reason: 'expected suggestions');
   }
 

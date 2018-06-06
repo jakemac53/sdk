@@ -45,9 +45,9 @@ abstract class CodegenWorldBuilder implements WorldBuilder {
   ConstantValue getConstantFieldInitializer(covariant FieldEntity field);
 
   /// Returns `true` if [member] is invoked as a setter.
-  bool hasInvokedSetter(MemberEntity member, ClosedWorld world);
+  bool hasInvokedSetter(MemberEntity member, JClosedWorld world);
 
-  bool hasInvokedGetter(MemberEntity member, ClosedWorld world);
+  bool hasInvokedGetter(MemberEntity member, JClosedWorld world);
 
   Map<Selector, SelectorConstraints> invocationsByName(String name);
 
@@ -83,7 +83,7 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
     implements CodegenWorldBuilder {
   final ElementEnvironment _elementEnvironment;
   final NativeBasicData _nativeBasicData;
-  final ClosedWorld _world;
+  final JClosedWorld _world;
 
   /// The set of all directly instantiated classes, that is, classes with a
   /// generative constructor that has been called directly and not only through
@@ -222,7 +222,7 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
   }
 
   bool _hasMatchingSelector(Map<Selector, SelectorConstraints> selectors,
-      MemberEntity member, ClosedWorld world) {
+      MemberEntity member, JClosedWorld world) {
     if (selectors == null) return false;
     for (Selector selector in selectors.keys) {
       if (selector.appliesUnnamed(member)) {
@@ -235,16 +235,16 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
     return false;
   }
 
-  bool hasInvocation(MemberEntity member, ClosedWorld world) {
+  bool hasInvocation(MemberEntity member, JClosedWorld world) {
     return _hasMatchingSelector(_invokedNames[member.name], member, world);
   }
 
-  bool hasInvokedGetter(MemberEntity member, ClosedWorld world) {
+  bool hasInvokedGetter(MemberEntity member, JClosedWorld world) {
     return _hasMatchingSelector(_invokedGetters[member.name], member, world) ||
         member.isFunction && methodsNeedingSuperGetter.contains(member);
   }
 
-  bool hasInvokedSetter(MemberEntity member, ClosedWorld world) {
+  bool hasInvokedSetter(MemberEntity member, JClosedWorld world) {
     return _hasMatchingSelector(_invokedSetters[member.name], member, world);
   }
 
@@ -256,7 +256,8 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
     void _process(Map<String, Set<_MemberUsage>> memberMap,
         EnumSet<MemberUse> action(_MemberUsage usage)) {
       _processSet(memberMap, methodName, (_MemberUsage usage) {
-        if (dynamicUse.appliesUnnamed(usage.entity, _world)) {
+        if (selectorConstraintsStrategy.appliedUnnamed(
+            dynamicUse, usage.entity, _world)) {
           memberUsed(usage.entity, action(usage));
           return true;
         }
@@ -294,14 +295,14 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
       Map<String, Map<Selector, SelectorConstraints>> selectorMap) {
     Selector selector = dynamicUse.selector;
     String name = selector.name;
-    ReceiverConstraint mask = dynamicUse.mask;
+    Object constraint = dynamicUse.receiverConstraint;
     Map<Selector, SelectorConstraints> selectors = selectorMap.putIfAbsent(
         name, () => new Maplet<Selector, SelectorConstraints>());
     UniverseSelectorConstraints constraints =
         selectors.putIfAbsent(selector, () {
       return selectorConstraintsStrategy.createSelectorConstraints(selector);
     });
-    return constraints.addReceiverConstraint(mask);
+    return constraints.addReceiverConstraint(constraint);
   }
 
   Map<Selector, SelectorConstraints> _asUnmodifiable(
@@ -637,104 +638,6 @@ abstract class CodegenWorldBuilderImpl extends WorldBuilderBase
   }
 }
 
-class ElementCodegenWorldBuilderImpl extends CodegenWorldBuilderImpl {
-  final JavaScriptConstantCompiler _constants;
-
-  ElementCodegenWorldBuilderImpl(
-      this._constants,
-      ElementEnvironment elementEnvironment,
-      NativeBasicData nativeBasicData,
-      ClosedWorld world,
-      SelectorConstraintsStrategy selectorConstraintsStrategy)
-      : super(elementEnvironment, nativeBasicData, world,
-            selectorConstraintsStrategy);
-
-  @override
-  bool hasConstantFieldInitializer(FieldElement field) {
-    return field.constant != null;
-  }
-
-  @override
-  ConstantValue getConstantFieldInitializer(FieldElement field) {
-    assert(field.constant != null,
-        failedAt(field, "Field $field doesn't have a constant initial value."));
-    return _constants.getConstantValue(field.constant);
-  }
-
-  /// Calls [f] with every instance field, together with its declarer, in an
-  /// instance of [cls].
-  void forEachInstanceField(
-      ClassElement cls, void f(ClassEntity declarer, FieldEntity field)) {
-    cls.implementation
-        .forEachInstanceField(f, includeSuperAndInjectedMembers: true);
-  }
-
-  /// Calls [f] with every instance field of the immediate class [cls].
-  void forEachDirectInstanceField(ClassElement cls, void f(FieldEntity field)) {
-    cls.implementation.forEachInstanceField((ClassEntity _, FieldEntity field) {
-      f(field);
-    }, includeSuperAndInjectedMembers: false);
-  }
-
-  @override
-  void forEachParameter(MethodElement function,
-      void f(DartType type, String name, ConstantValue defaultValue)) {
-    if (!function.hasFunctionSignature) return;
-    function = function.implementation;
-    FunctionSignature parameters = function.functionSignature;
-    parameters.orderedForEachParameter((_parameter) {
-      ParameterElement parameter = _parameter;
-      ConstantValue value;
-      if (parameter.isOptional) {
-        value = _constants.getConstantValue(parameter.constant);
-      }
-      f(parameter.type, parameter.name, value);
-    });
-  }
-
-  @override
-  void forEachParameterAsLocal(
-      MethodElement function, void f(Local parameter)) {
-    if (!function.hasFunctionSignature) return;
-    function = function.implementation;
-    FunctionSignature parameters = function.functionSignature;
-    parameters.orderedForEachParameter((_parameter) {
-      ParameterElement parameter = _parameter;
-      f(parameter);
-    });
-  }
-
-  @override
-  void _processInstantiatedClassMember(
-      ClassEntity cls, MemberElement member, MemberUsedCallback memberUsed) {
-    assert(member.isDeclaration, failedAt(member));
-    if (member.isMalformed) return;
-    super._processInstantiatedClassMember(cls, member, memberUsed);
-  }
-
-  @override
-  _MemberUsage _getMemberUsage(
-      MemberElement member, MemberUsedCallback memberUsed) {
-    assert(member.isDeclaration, failedAt(member));
-    return super._getMemberUsage(member, memberUsed);
-  }
-
-  void registerStaticUse(StaticUse staticUse, MemberUsedCallback memberUsed) {
-    Element element = staticUse.element;
-    assert(element.isDeclaration,
-        failedAt(element, "Element ${element} is not the declaration."));
-    super.registerStaticUse(staticUse, memberUsed);
-  }
-
-  void registerIsCheck(ResolutionDartType type) {
-    // Even in checked mode, type annotations for return type and argument
-    // types do not imply type checks, so there should never be a check
-    // against the type variable of a typedef.
-    assert(!type.isTypeVariable || !type.element.enclosingElement.isTypedef);
-    super.registerIsCheck(type);
-  }
-}
-
 class KernelCodegenWorldBuilder extends CodegenWorldBuilderImpl {
   final KernelToWorldBuilder _elementMap;
   final GlobalLocalsMap _globalLocalsMap;
@@ -744,7 +647,7 @@ class KernelCodegenWorldBuilder extends CodegenWorldBuilderImpl {
       this._globalLocalsMap,
       ElementEnvironment elementEnvironment,
       NativeBasicData nativeBasicData,
-      ClosedWorld world,
+      JClosedWorld world,
       SelectorConstraintsStrategy selectorConstraintsStrategy)
       : super(elementEnvironment, nativeBasicData, world,
             selectorConstraintsStrategy);

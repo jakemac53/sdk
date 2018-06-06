@@ -111,6 +111,7 @@ namespace dart {
   V(RegExp_getGroupCount, 1)                                                   \
   V(RegExp_ExecuteMatch, 3)                                                    \
   V(RegExp_ExecuteMatchSticky, 3)                                              \
+  V(List_new, 2)                                                               \
   V(List_allocate, 2)                                                          \
   V(List_getIndexed, 2)                                                        \
   V(List_setIndexed, 3)                                                        \
@@ -357,7 +358,6 @@ namespace dart {
 
 // List of bootstrap native entry points used in the dart:mirror library.
 #define MIRRORS_BOOTSTRAP_NATIVE_LIST(V)                                       \
-  V(Mirrors_evalInLibraryWithPrivateKey, 2)                                    \
   V(Mirrors_makeLocalClassMirror, 1)                                           \
   V(Mirrors_makeLocalTypeMirror, 1)                                            \
   V(Mirrors_instantiateGenericType, 2)                                         \
@@ -365,6 +365,7 @@ namespace dart {
   V(MirrorReference_equals, 2)                                                 \
   V(MirrorSystem_libraries, 0)                                                 \
   V(MirrorSystem_isolate, 0)                                                   \
+  V(IsolateMirror_loadUri, 1)                                                  \
   V(InstanceMirror_invoke, 5)                                                  \
   V(InstanceMirror_invokeGetter, 3)                                            \
   V(InstanceMirror_invokeSetter, 4)                                            \

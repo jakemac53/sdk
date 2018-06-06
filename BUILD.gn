@@ -13,7 +13,7 @@ group("default") {
     testonly = true
   }
   deps = [
-    ":runtime",
+    ":runtime_kernel",
   ]
 }
 
@@ -136,6 +136,12 @@ group("dart2js_bot") {
 group("samples") {
   deps = [
     "runtime/bin:sample_extension",
+  ]
+}
+
+group("observatory_archive") {
+  deps = [
+    "runtime/observatory:observatory_archive"
   ]
 }
 

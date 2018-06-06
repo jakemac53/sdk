@@ -38,7 +38,7 @@ class AssistProcessorTest extends AbstractSingleUnitTest {
   String resultCode;
   LinkedEditGroup linkedPositionGroup;
 
-  bool get omitNew => false;
+  bool get omitNew => true;
 
   /**
    * Asserts that there is an [Assist] of the given [kind] at [offset] which
@@ -104,7 +104,7 @@ class AssistProcessorTest extends AbstractSingleUnitTest {
   }
 
   test_addTypeAnnotation_BAD_privateType_closureParameter() async {
-    addSource('/my_lib.dart', '''
+    addSource('/project/my_lib.dart', '''
 library my_lib;
 class A {}
 class _B extends A {}
@@ -120,7 +120,7 @@ main() {
   }
 
   test_addTypeAnnotation_BAD_privateType_declaredIdentifier() async {
-    addSource('/my_lib.dart', '''
+    addSource('/project/my_lib.dart', '''
 library my_lib;
 class A {}
 class _B extends A {}
@@ -141,7 +141,7 @@ class A<T> {
   test_addTypeAnnotation_BAD_privateType_list() async {
     // This is now failing because we're suggesting "List" rather than nothing.
     // Is it really better to produce nothing?
-    addSource('/my_lib.dart', '''
+    addSource('/project/my_lib.dart', '''
 library my_lib;
 class A {}
 class _B extends A {}
@@ -162,7 +162,7 @@ main() {
   }
 
   test_addTypeAnnotation_BAD_privateType_variable() async {
-    addSource('/my_lib.dart', '''
+    addSource('/project/my_lib.dart', '''
 library my_lib;
 class A {}
 class _B extends A {}
@@ -279,7 +279,7 @@ main(List<String> items) {
   }
 
   test_addTypeAnnotation_declaredIdentifier_OK_addImport_dartUri() async {
-    addSource('/my_lib.dart', r'''
+    addSource('/project/my_lib.dart', r'''
 import 'dart:async';
 List<Future<int>> getFutures() => null;
 ''');
@@ -416,7 +416,7 @@ class A<T> {
   }
 
   test_addTypeAnnotation_local_OK_addImport_dartUri() async {
-    addSource('/my_lib.dart', r'''
+    addSource('/project/my_lib.dart', r'''
 import 'dart:async';
 Future<int> getFutureInt() => null;
 ''');
@@ -438,7 +438,7 @@ main() {
 
   test_addTypeAnnotation_local_OK_addImport_notLibraryUnit() async {
     // prepare library
-    addSource('/my_lib.dart', r'''
+    addSource('/project/my_lib.dart', r'''
 import 'dart:async';
 Future<int> getFutureInt() => null;
 ''');
@@ -455,8 +455,8 @@ main() {
 }
 ''';
     // add sources
-    addSource('/app.dart', appCode);
-    testSource = addSource('/test.dart', testCode);
+    addSource('/project/app.dart', appCode);
+    testSource = addSource('/project/test.dart', testCode);
     // resolve
     await resolveTestUnit(testCode);
     // prepare the assist
@@ -465,7 +465,7 @@ main() {
     change = assist.change;
     // verify
     {
-      var testFileEdit = change.getFileEdit(convertPath('/app.dart'));
+      var testFileEdit = change.getFileEdit(convertPath('/project/app.dart'));
       var resultCode = SourceEdit.applySequence(appCode, testFileEdit.edits);
       expect(resultCode, '''
 library my_app;
@@ -476,7 +476,7 @@ part 'test.dart';
 ''');
     }
     {
-      var testFileEdit = change.getFileEdit(convertPath('/test.dart'));
+      var testFileEdit = change.getFileEdit(convertPath('/project/test.dart'));
       var resultCode = SourceEdit.applySequence(testCode, testFileEdit.edits);
       expect(resultCode, '''
 part of my_app;
@@ -488,10 +488,10 @@ main() {
   }
 
   test_addTypeAnnotation_local_OK_addImport_relUri() async {
-    addSource('/aa/bbb/lib_a.dart', r'''
+    addSource('/project/aa/bbb/lib_a.dart', r'''
 class MyClass {}
 ''');
-    addSource('/ccc/lib_b.dart', r'''
+    addSource('/project/ccc/lib_b.dart', r'''
 import '../aa/bbb/lib_a.dart';
 MyClass newMyClass() => null;
 ''');
@@ -518,7 +518,7 @@ main() {
 ''');
     await assertHasAssistAt('v =', DartAssistKind.ADD_TYPE_ANNOTATION, '''
 main() {
-  Function v = () => 1;
+  int Function() v = () => 1;
 }
 ''');
   }
@@ -1676,6 +1676,34 @@ class A {
 }
 class B extends A {
   final int foo;
+}
+''');
+  }
+
+  test_convertToFinalField_OK_noReturnType() async {
+    await resolveTestUnit('''
+class A {
+  get foo => 42;
+}
+''');
+    await assertHasAssistAt(
+        'get foo', DartAssistKind.CONVERT_INTO_FINAL_FIELD, '''
+class A {
+  final foo = 42;
+}
+''');
+  }
+
+  test_convertToFinalField_OK_noReturnType_static() async {
+    await resolveTestUnit('''
+class A {
+  static get foo => 42;
+}
+''');
+    await assertHasAssistAt(
+        'get foo', DartAssistKind.CONVERT_INTO_FINAL_FIELD, '''
+class A {
+  static final foo = 42;
 }
 ''');
   }
@@ -3405,6 +3433,7 @@ build() {
   return new Scaffold(
 // start
     body: new Center(
+      key: null,
       child: new /*caret*/GestureDetector(
         onTap: () => startResize(),
         child: new Container(
@@ -3412,13 +3441,64 @@ build() {
           height: 300.0,
         ),
       ),
-      key: null,
     ),
 // end
   );
 }
 startResize() {}
 ''');
+  }
+
+  test_flutterSwapWithChild_OK_notFormatted() async {
+    addFlutterPackage();
+    await resolveTestUnit('''
+import 'package:flutter/material.dart';
+
+class Foo extends StatefulWidget {
+  @override
+  _State createState() => new _State();
+}
+
+class _State extends State<Foo> {
+  @override
+  Widget build(BuildContext context) {
+    return new /*caret*/Expanded(
+      flex: 2,
+      child: new GestureDetector(
+        child: new Text(
+          'foo',
+        ), onTap: () {
+          print(42);
+      },
+      ),
+    );
+  }
+}''');
+    _setCaretLocation();
+    await assertHasAssist(DartAssistKind.FLUTTER_SWAP_WITH_CHILD, '''
+import 'package:flutter/material.dart';
+
+class Foo extends StatefulWidget {
+  @override
+  _State createState() => new _State();
+}
+
+class _State extends State<Foo> {
+  @override
+  Widget build(BuildContext context) {
+    return new GestureDetector(
+      onTap: () {
+        print(42);
+    },
+      child: new /*caret*/Expanded(
+        flex: 2,
+        child: new Text(
+          'foo',
+        ),
+      ),
+    );
+  }
+}''');
   }
 
   test_flutterSwapWithParent_OK() async {
@@ -3452,11 +3532,11 @@ build() {
     body: new /*caret*/GestureDetector(
       onTap: () => startResize(),
       child: new Center(
+        key: null,
         child: new Container(
           width: 200.0,
           height: 300.0,
         ),
-        key: null,
       ),
     ),
 // end
@@ -3464,6 +3544,58 @@ build() {
 }
 startResize() {}
 ''');
+  }
+
+  test_flutterSwapWithParent_OK_notFormatted() async {
+    addFlutterPackage();
+    await resolveTestUnit('''
+import 'package:flutter/material.dart';
+
+class Foo extends StatefulWidget {
+  @override
+  _State createState() => new _State();
+}
+
+class _State extends State<Foo> {
+  @override
+  Widget build(BuildContext context) {
+    return new GestureDetector(
+      child: new /*caret*/Expanded(
+        child: new Text(
+          'foo',
+        ),
+        flex: 2,
+      ), onTap: () {
+        print(42);
+    },
+    );
+  }
+}''');
+    _setCaretLocation();
+    await assertHasAssist(DartAssistKind.FLUTTER_SWAP_WITH_PARENT, '''
+import 'package:flutter/material.dart';
+
+class Foo extends StatefulWidget {
+  @override
+  _State createState() => new _State();
+}
+
+class _State extends State<Foo> {
+  @override
+  Widget build(BuildContext context) {
+    return new /*caret*/Expanded(
+      flex: 2,
+      child: new GestureDetector(
+        onTap: () {
+          print(42);
+      },
+        child: new Text(
+          'foo',
+        ),
+      ),
+    );
+  }
+}''');
   }
 
   test_flutterSwapWithParent_OK_outerIsInChildren() async {
@@ -3568,7 +3700,7 @@ class FakeFlutter {
 import 'package:flutter/widgets.dart';
 class FakeFlutter {
   main() {
-    return /*caret*/new Container();
+    return /*caret*/Container();
   }
 }
 ''');
@@ -3577,10 +3709,57 @@ class FakeFlutter {
 import 'package:flutter/widgets.dart';
 class FakeFlutter {
   main() {
-    return /*caret*/new Center(child: new Container());
+    return /*caret*/Center(child: Container());
   }
 }
 ''');
+  }
+
+  test_flutterWrapCenter_OK_namedConstructor() async {
+    addFlutterPackage();
+    await resolveTestUnit('''
+import 'package:flutter/widgets.dart';
+
+class MyWidget extends StatelessWidget {
+  MyWidget.named();
+
+  Widget build(BuildContext context) => null;
+}
+
+main() {
+  return MyWidget./*caret*/named();
+}
+''');
+    _setCaretLocation();
+    if (omitNew) {
+      await assertHasAssist(DartAssistKind.FLUTTER_WRAP_CENTER, '''
+import 'package:flutter/widgets.dart';
+
+class MyWidget extends StatelessWidget {
+  MyWidget.named();
+
+  Widget build(BuildContext context) => null;
+}
+
+main() {
+  return Center(child: MyWidget./*caret*/named());
+}
+''');
+    } else {
+      await assertHasAssist(DartAssistKind.FLUTTER_WRAP_CENTER, '''
+import 'package:flutter/widgets.dart';
+
+class MyWidget extends StatelessWidget {
+  MyWidget.named();
+
+  Widget build(BuildContext context) => null;
+}
+
+main() {
+  return new Center(child: MyWidget./*caret*/named());
+}
+''');
+    }
   }
 
   test_flutterWrapColumn_OK_coveredByWidget() async {
@@ -3704,7 +3883,7 @@ import 'package:flutter/widgets.dart';
 
 main() {
   return Container(
-    child: /*caret*/new Text('aaa'),
+    child: /*caret*/Text('aaa'),
   );
 }
 ''');
@@ -3714,9 +3893,9 @@ import 'package:flutter/widgets.dart';
 
 main() {
   return Container(
-    child: /*caret*/new Column(
+    child: /*caret*/Column(
       children: <Widget>[
-        new Text('aaa'),
+        Text('aaa'),
       ],
     ),
   );

@@ -11,7 +11,6 @@ import 'package:compiler/src/common_elements.dart';
 import 'package:compiler/src/commandline_options.dart';
 import 'package:compiler/src/compiler.dart';
 import 'package:compiler/src/elements/entities.dart';
-import 'package:compiler/src/world.dart';
 import 'package:expect/expect.dart';
 import 'package:sourcemap_testing/src/annotated_code_helper.dart';
 
@@ -95,6 +94,26 @@ typedef void ComputeClassDataFunction(
     Compiler compiler, ClassEntity cls, Map<Id, ActualData> actualMap,
     {bool verbose});
 
+abstract class DataComputer {
+  void setup();
+
+  /// Function that computes a data mapping for [member].
+  ///
+  /// Fills [actualMap] with the data and [sourceSpanMap] with the source spans
+  /// for the data origin.
+  void computeMemberData(
+      Compiler compiler, MemberEntity member, Map<Id, ActualData> actualMap,
+      {bool verbose});
+
+  /// Function that computes a data mapping for [cls].
+  ///
+  /// Fills [actualMap] with the data and [sourceSpanMap] with the source spans
+  /// for the data origin.
+  void computeClassData(
+      Compiler compiler, ClassEntity cls, Map<Id, ActualData> actualMap,
+      {bool verbose});
+}
+
 const String stopAfterTypeInference = 'stopAfterTypeInference';
 
 /// Reports [message] as an error using [spannable] as error location.
@@ -124,6 +143,7 @@ Future<CompiledData> computeData(
     ComputeMemberDataFunction computeMemberData,
     {List<String> options: const <String>[],
     bool verbose: false,
+    bool testFrontend: false,
     bool forUserLibrariesOnly: true,
     bool skipUnprocessedMembers: false,
     bool skipFailedCompilations: false,
@@ -142,7 +162,9 @@ Future<CompiledData> computeData(
     Expect.isTrue(result.isSuccess, "Unexpected compilation error.");
   }
   Compiler compiler = result.compiler;
-  ClosedWorld closedWorld = compiler.backendClosedWorldForTesting;
+  dynamic closedWorld = testFrontend
+      ? compiler.resolutionWorldBuilder.closedWorldForTesting
+      : compiler.backendClosedWorldForTesting;
   ElementEnvironment elementEnvironment = closedWorld.elementEnvironment;
   CommonElements commonElements = closedWorld.commonElements;
 
@@ -456,6 +478,7 @@ Future checkTests(
     List<String> options: const <String>[],
     List<String> args: const <String>[],
     Directory libDirectory: null,
+    bool testFrontend: false,
     bool forUserLibrariesOnly: true,
     Callback setUpFunction,
     ComputeClassDataFunction computeClassDataFromKernel,
@@ -560,6 +583,7 @@ Future checkTests(
           computeClassData: computeClassDataFromKernel,
           options: options,
           verbose: verbose,
+          testFrontend: testFrontend,
           forUserLibrariesOnly: forUserLibrariesOnly,
           globalIds: annotations.globalData.keys);
       if (await checkCode(
@@ -584,6 +608,7 @@ Future checkTests(
             computeClassData: computeClassDataFromKernel,
             options: options,
             verbose: verbose,
+            testFrontend: testFrontend,
             forUserLibrariesOnly: forUserLibrariesOnly,
             globalIds: annotations.globalData.keys);
         if (await checkCode(
@@ -607,6 +632,7 @@ Future checkTests(
             computeClassData: computeClassDataFromKernel,
             options: options,
             verbose: verbose,
+            testFrontend: testFrontend,
             forUserLibrariesOnly: forUserLibrariesOnly,
             globalIds: annotations.globalData.keys);
         if (await checkCode(
@@ -665,7 +691,7 @@ Future<bool> checkCode(
               'UNEXPECTED $mode DATA for ${id.descriptor}: '
               'Object: ${actualData.objectText}\n '
               'expected: ${colorizeExpected('$expected')}\n '
-              'actual: ${colorizeActual('$actual')}');
+              'actual  : ${colorizeActual('$actual')}');
           if (filterActualData == null ||
               filterActualData(expected, actualData)) {
             hasLocalFailure = true;

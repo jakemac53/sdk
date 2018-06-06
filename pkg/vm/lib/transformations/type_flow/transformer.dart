@@ -51,7 +51,8 @@ Component transformComponent(
   Statistics.reset();
   final analysisStopWatch = new Stopwatch()..start();
 
-  final typeFlowAnalysis = new TypeFlowAnalysis(hierarchy, types, libraryIndex,
+  final typeFlowAnalysis = new TypeFlowAnalysis(
+      component, coreTypes, hierarchy, types, libraryIndex,
       entryPointsJSONFiles: entryPoints);
 
   Procedure main = component.mainMethod;
@@ -297,11 +298,13 @@ class TreeShaker {
   final Set<Member> _usedMembers = new Set<Member>();
   final Set<Typedef> _usedTypedefs = new Set<Typedef>();
   _TreeShakerTypeVisitor typeVisitor;
+  _TreeShakerConstantVisitor constantVisitor;
   _TreeShakerPass1 _pass1;
   _TreeShakerPass2 _pass2;
 
   TreeShaker(Component component, this.typeFlowAnalysis) {
     typeVisitor = new _TreeShakerTypeVisitor(this);
+    constantVisitor = new _TreeShakerConstantVisitor(this, typeVisitor);
     _pass1 = new _TreeShakerPass1(this);
     _pass2 = new _TreeShakerPass2(this);
   }
@@ -379,7 +382,9 @@ class TreeShaker {
 
   void addUsedTypedef(Typedef typedef) {
     if (_usedTypedefs.add(typedef)) {
-      typedef.visitChildren(typeVisitor);
+      transformList(typedef.annotations, _pass1, typedef);
+      visitList(typedef.typeParameters, typeVisitor);
+      typedef.type?.accept(typeVisitor);
     }
   }
 }
@@ -415,6 +420,14 @@ class _TreeShakerTypeVisitor extends RecursiveVisitor<Null> {
     final typedef = node.typedef;
     if (typedef != null) {
       shaker.addUsedTypedef(typedef);
+    }
+  }
+
+  @override
+  visitTypeParameterType(TypeParameterType node) {
+    final parent = node.parameter.parent;
+    if (parent is Class) {
+      shaker.addClassUsedInType(parent);
     }
   }
 }
@@ -639,6 +652,12 @@ class _TreeShakerPass1 extends Transformer {
       }
       return node;
     }
+  }
+
+  @override
+  TreeNode visitConstantExpression(ConstantExpression node) {
+    shaker.constantVisitor.analyzeConstant(node.constant);
+    return node;
   }
 
   @override
@@ -877,5 +896,77 @@ class _TreeShakerPass2 extends Transformer {
   @override
   TreeNode defaultTreeNode(TreeNode node) {
     return node; // Do not traverse into other nodes.
+  }
+}
+
+class _TreeShakerConstantVisitor extends ConstantVisitor<Null> {
+  final TreeShaker shaker;
+  final _TreeShakerTypeVisitor typeVisitor;
+  final Set<Constant> constants = new Set<Constant>();
+  final Set<InstanceConstant> instanceConstants = new Set<InstanceConstant>();
+
+  _TreeShakerConstantVisitor(this.shaker, this.typeVisitor);
+
+  analyzeConstant(Constant constant) {
+    if (constants.add(constant)) {
+      constant.accept(this);
+    }
+  }
+
+  @override
+  defaultConstant(Constant constant) {
+    throw 'There is no support for constant "$constant" in TFA yet!';
+  }
+
+  @override
+  visitNullConstant(NullConstant constant) {}
+
+  @override
+  visitBoolConstant(BoolConstant constant) {}
+
+  @override
+  visitIntConstant(IntConstant constant) {}
+
+  @override
+  visitDoubleConstant(DoubleConstant constant) {}
+
+  @override
+  visitStringConstant(StringConstant constant) {}
+
+  @override
+  visitMapConstant(MapConstant node) {
+    throw 'The kernel2kernel constants transformation desugars const maps!';
+  }
+
+  @override
+  visitListConstant(ListConstant constant) {
+    for (final Constant entry in constant.entries) {
+      analyzeConstant(entry);
+    }
+  }
+
+  @override
+  visitInstanceConstant(InstanceConstant constant) {
+    instanceConstants.add(constant);
+    shaker.addClassUsedInType(constant.klass);
+    constant.fieldValues.forEach((Reference fieldRef, Constant value) {
+      shaker.addUsedMember(fieldRef.asField);
+      analyzeConstant(value);
+    });
+  }
+
+  @override
+  visitTearOffConstant(TearOffConstant constant) {
+    shaker.addUsedMember(constant.procedure);
+  }
+
+  @override
+  visitPartialInstantiationConstant(PartialInstantiationConstant constant) {
+    analyzeConstant(constant.tearOffConstant);
+  }
+
+  @override
+  visitTypeLiteralConstant(TypeLiteralConstant constant) {
+    constant.type.accept(typeVisitor);
   }
 }

@@ -3150,6 +3150,31 @@ RawType* ClassFinalizer::ResolveMixinAppType(
   return Type::New(mixin_app_class, mixin_app_args, mixin_app_type.token_pos());
 }
 
+// For a class used as an interface marks this class and all its superclasses
+// implemented.
+//
+// Does not mark its interfaces implemented because those would already be
+// marked as such.
+static void MarkImplemented(Zone* zone, const Class& iface) {
+  if (iface.is_implemented()) {
+    return;
+  }
+
+  Class& cls = Class::Handle(zone, iface.raw());
+  AbstractType& type = AbstractType::Handle(zone);
+
+  while (!cls.is_implemented()) {
+    cls.set_is_implemented();
+
+    type = cls.super_type();
+    if (type.IsNull() || type.IsObjectType()) {
+      break;
+    }
+    ASSERT(type.IsResolved());
+    cls = type.type_class();
+  }
+}
+
 // Recursively walks the graph of explicitly declared super type and
 // interfaces, resolving unresolved super types and interfaces.
 // Reports an error if there is an interface reference that cannot be
@@ -3198,9 +3223,11 @@ void ClassFinalizer::ResolveSuperTypeAndInterfaces(
     cls.set_super_type(super_type);
   }
 
-  // If cls belongs to core lib, restrictions about allowed interfaces
-  // are lifted.
-  const bool cls_belongs_to_core_lib = cls.library() == Library::CoreLibrary();
+  // If cls belongs to core lib or is a synthetic class which could belong to
+  // the core library, the restrictions about allowed interfaces are lifted.
+  const bool exempt_from_hierarchy_restrictions =
+      cls.library() == Library::CoreLibrary() ||
+      String::Handle(cls.Name()).Equals(Symbols::DebugClassName());
 
   // Resolve and check the super type and interfaces of cls.
   visited->Add(cls_index);
@@ -3231,7 +3258,7 @@ void ClassFinalizer::ResolveSuperTypeAndInterfaces(
 
   // If cls belongs to core lib or to core lib's implementation, restrictions
   // about allowed interfaces are lifted.
-  if (!cls_belongs_to_core_lib) {
+  if (!exempt_from_hierarchy_restrictions) {
     // Prevent extending core implementation classes.
     bool is_error = false;
     switch (interface_class.id()) {
@@ -3310,7 +3337,7 @@ void ClassFinalizer::ResolveSuperTypeAndInterfaces(
     }
     // Verify that unless cls belongs to core lib, it cannot extend, implement,
     // or mixin any of Null, bool, num, int, double, String, dynamic.
-    if (!cls_belongs_to_core_lib) {
+    if (!exempt_from_hierarchy_restrictions) {
       if (interface.IsBoolType() || interface.IsNullType() ||
           interface.IsNumberType() || interface.IsIntType() ||
           interface.IsDoubleType() || interface.IsStringType() ||
@@ -3328,9 +3355,10 @@ void ClassFinalizer::ResolveSuperTypeAndInterfaces(
         }
       }
     }
-    interface_class.set_is_implemented();
+
     // Now resolve the super interfaces.
     ResolveSuperTypeAndInterfaces(interface_class, visited);
+    MarkImplemented(zone, interface_class);
   }
   visited->RemoveLast();
   cls.set_is_cycle_free();

@@ -696,10 +696,28 @@ class Class extends NamedNode implements FileUriNode {
   /// applications.
   @coq
   String name;
-  bool isAbstract;
+
+  // Must match serialized bit positions.
+  static const int LevelMask = 0x3; // Bits 0 and 1.
+  static const int FlagAbstract = 1 << 2;
+  static const int FlagEnum = 1 << 3;
+  static const int FlagAnonymousMixin = 1 << 4;
+  static const int FlagEliminatedMixin = 1 << 5;
+
+  int flags = 0;
+
+  bool get isAbstract => flags & FlagAbstract != 0;
+
+  void set isAbstract(bool value) {
+    flags = value ? (flags | FlagAbstract) : (flags & ~FlagAbstract);
+  }
 
   /// Whether this class is an enum.
-  bool isEnum = false;
+  bool get isEnum => flags & FlagEnum != 0;
+
+  void set isEnum(bool value) {
+    flags = value ? (flags | FlagEnum) : (flags & ~FlagEnum);
+  }
 
   /// Whether this class is a synthetic implementation created for each
   /// mixed-in class. For example the following code:
@@ -714,7 +732,22 @@ class Class extends NamedNode implements FileUriNode {
   /// abstract class A&B&C&D extends A&B&C mixedIn D {}
   /// class Z extends A&B&C&D {}
   /// All X&Y classes are marked as synthetic.
-  bool isSyntheticMixinImplementation;
+  bool get isAnonymousMixin => flags & FlagAnonymousMixin != 0;
+
+  void set isAnonymousMixin(bool value) {
+    flags =
+        value ? (flags | FlagAnonymousMixin) : (flags & ~FlagAnonymousMixin);
+  }
+
+  /// Whether this class was transformed from a mixin application.
+  /// In such case, its mixed-in type was pulled into the end of implemented
+  /// types list.
+  bool get isEliminatedMixin => flags & FlagEliminatedMixin != 0;
+
+  void set isEliminatedMixin(bool value) {
+    flags =
+        value ? (flags | FlagEliminatedMixin) : (flags & ~FlagEliminatedMixin);
+  }
 
   /// The URI of the source file this class was loaded from.
   Uri fileUri;
@@ -750,8 +783,8 @@ class Class extends NamedNode implements FileUriNode {
 
   Class(
       {this.name,
-      this.isAbstract: false,
-      this.isSyntheticMixinImplementation: false,
+      bool isAbstract: false,
+      bool isAnonymousMixin: false,
       this.supertype,
       this.mixedInType,
       List<TypeParameter> typeParameters,
@@ -775,6 +808,8 @@ class Class extends NamedNode implements FileUriNode {
     setParents(this.procedures, this);
     setParents(this.fields, this);
     setParents(this.redirectingFactoryConstructors, this);
+    this.isAbstract = isAbstract;
+    this.isAnonymousMixin = isAnonymousMixin;
   }
 
   void computeCanonicalNames() {
@@ -1575,7 +1610,6 @@ class Procedure extends Member {
   }
 
   void set isNoSuchMethodForwarder(bool value) {
-    assert(isAbstract);
     flags = value
         ? (flags | FlagNoSuchMethodForwarder)
         : (flags & ~FlagNoSuchMethodForwarder);
@@ -2564,6 +2598,17 @@ class Arguments extends TreeNode {
       : types = <DartType>[],
         positional = <Expression>[],
         named = <NamedExpression>[];
+
+  factory Arguments.forwarded(FunctionNode function) {
+    return new Arguments(
+        function.positionalParameters.map((p) => new VariableGet(p)).toList(),
+        named: function.namedParameters
+            .map((p) => new NamedExpression(p.name, new VariableGet(p)))
+            .toList(),
+        types: function.typeParameters
+            .map((p) => new TypeParameterType(p))
+            .toList());
+  }
 
   accept(TreeVisitor v) => v.visitArguments(this);
 
@@ -5001,7 +5046,7 @@ class TypeParameter extends TreeNode {
   /// argument of a dynamic invocation of a generic function.
   DartType defaultType;
 
-  TypeParameter([this.name, this.bound]);
+  TypeParameter([this.name, this.bound, this.defaultType]);
 
   // Must match serialized bit positions.
   static const int FlagGenericCovariantImpl = 1 << 0;
@@ -5031,10 +5076,14 @@ class TypeParameter extends TreeNode {
 
   visitChildren(Visitor v) {
     bound.accept(v);
+    defaultType?.accept(v);
   }
 
   transformChildren(Transformer v) {
     bound = v.visitDartType(bound);
+    if (defaultType != null) {
+      defaultType = v.visitDartType(defaultType);
+    }
   }
 
   /// Returns a possibly synthesized name for this type parameter, consistent
@@ -5527,14 +5576,28 @@ abstract class MetadataRepository<T> {
   /// Mutable mapping between nodes and their metadata.
   Map<TreeNode, T> get mapping;
 
-  /// Write the given metadata object into the given [BinarySink].
+  /// Write [metadata] object corresponding to the given [Node] into
+  /// the given [BinarySink].
   ///
-  /// Note: [metadata] must be an object owned by this repository.
-  void writeToBinary(T metadata, BinarySink sink);
+  /// Metadata is serialized immediately before serializing [node],
+  /// so implementation of this method can use serialization context of
+  /// [node]'s parents (such as declared type parameters and variables).
+  /// In order to use scope declared by the [node] itself, implementation of
+  /// this method can use [BinarySink.enterScope] and [BinarySink.leaveScope]
+  /// methods.
+  ///
+  /// [metadata] must be an object owned by this repository.
+  void writeToBinary(T metadata, Node node, BinarySink sink);
 
   /// Construct a metadata object from its binary payload read from the
   /// given [BinarySource].
-  T readFromBinary(BinarySource source);
+  ///
+  /// Metadata is deserialized immediately after deserializing [node],
+  /// so it can use deserialization context of [node]'s parents.
+  /// In order to use scope declared by the [node] itself, implementation of
+  /// this method can use [BinarySource.enterScope] and
+  /// [BinarySource.leaveScope] methods.
+  T readFromBinary(Node node, BinarySource source);
 
   /// Method to check whether a node can have metadata attached to it
   /// or referenced from the metadata payload.
@@ -5557,12 +5620,18 @@ abstract class BinarySink {
 
   void writeCanonicalNameReference(CanonicalName name);
   void writeStringReference(String str);
+  void writeName(Name node);
+  void writeDartType(DartType type);
+  void writeNode(Node node);
 
-  /// Write a reference to a given node into the sink.
-  ///
-  /// Note: node must not be [MapEntry] because [MapEntry] and [MapEntry.key]
-  /// have the same offset in the binary and can't be distinguished.
-  void writeNodeReference(Node node);
+  void enterScope(
+      {List<TypeParameter> typeParameters,
+      bool memberScope: false,
+      bool variableScope: false});
+  void leaveScope(
+      {List<TypeParameter> typeParameters,
+      bool memberScope: false,
+      bool variableScope: false});
 }
 
 abstract class BinarySource {
@@ -5578,7 +5647,12 @@ abstract class BinarySource {
 
   CanonicalName readCanonicalNameReference();
   String readStringReference();
-  Node readNodeReference();
+  Name readName();
+  DartType readDartType();
+  FunctionNode readFunctionNode();
+
+  void enterScope({List<TypeParameter> typeParameters});
+  void leaveScope({List<TypeParameter> typeParameters});
 }
 
 // ------------------------------------------------------------------------

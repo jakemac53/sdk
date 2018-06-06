@@ -23,7 +23,7 @@ import '../universe/selector.dart' show Selector;
 import '../universe/side_effects.dart' show SideEffects;
 import '../universe/use.dart' show StaticUse;
 import '../util/util.dart';
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'interceptor_simplifier.dart';
 import 'nodes.dart';
 import 'types.dart';
@@ -53,7 +53,7 @@ class SsaOptimizerTask extends CompilerTask {
 
   RuntimeTypesSubstitutions get _rtiSubstitutions => _backend.rtiSubstitutions;
 
-  void optimize(CodegenWorkItem work, HGraph graph, ClosedWorld closedWorld) {
+  void optimize(CodegenWorkItem work, HGraph graph, JClosedWorld closedWorld) {
     void runPhase(OptimizationPhase phase) {
       measureSubtask(phase.name, () => phase.visitGraph(graph));
       _backend.tracer.traceGraph(phase.name, graph);
@@ -155,7 +155,7 @@ class SsaOptimizerTask extends CompilerTask {
 /// cannot change.  The current implementation is conservative for the purpose
 /// of identifying gvn-able lengths and mis-identifies some unions of fixed
 /// length indexables (see TODO) as not fixed length.
-bool isFixedLength(mask, ClosedWorld closedWorld) {
+bool isFixedLength(mask, JClosedWorld closedWorld) {
   if (mask.isContainer && mask.length != null) {
     // A container on which we have inferred the length.
     return true;
@@ -185,7 +185,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
   final GlobalTypeInferenceResults _globalInferenceResults;
   final CompilerOptions _options;
   final RuntimeTypesSubstitutions _rtiSubstitutions;
-  final ClosedWorld _closedWorld;
+  final JClosedWorld _closedWorld;
   final CodegenRegistry _registry;
   HGraph _graph;
 
@@ -223,7 +223,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
             instruction.isNumberOrNull(_abstractValueDomain))) {
           // If we can replace [instruction] with [replacement], then
           // [replacement]'s type can be narrowed.
-          TypeMask newType = _abstractValueDomain.intersection(
+          AbstractValue newType = _abstractValueDomain.intersection(
               replacement.instructionType, instruction.instructionType);
           replacement.instructionType = newType;
         }
@@ -255,9 +255,10 @@ class SsaInstructionSimplifier extends HBaseVisitor
   ConstantValue getConstantFromType(HInstruction node) {
     if (node.isValue(_abstractValueDomain) &&
         !node.canBeNull(_abstractValueDomain)) {
-      ValueTypeMask valueMask = node.instructionType;
-      if (valueMask.value.isBool) {
-        return valueMask.value;
+      ConstantValue value =
+          _abstractValueDomain.getPrimitiveValue(node.instructionType);
+      if (value.isBool) {
+        return value;
       }
       // TODO(het): consider supporting other values (short strings?)
     }
@@ -313,8 +314,8 @@ class SsaInstructionSimplifier extends HBaseVisitor
     if (_abstractValueDomain.isEmpty(input.instructionType)) return input;
 
     // All values that cannot be 'true' are boolified to false.
-    TypeMask mask = input.instructionType;
-    if (!mask.contains(commonElements.jsBoolClass, _closedWorld)) {
+    AbstractValue mask = input.instructionType;
+    if (!_abstractValueDomain.containsType(mask, commonElements.jsBoolClass)) {
       return _graph.addConstantBool(false, _closedWorld);
     }
     return node;
@@ -363,13 +364,13 @@ class SsaInstructionSimplifier extends HBaseVisitor
       }
       bool isFixed =
           isFixedLength(actualReceiver.instructionType, _closedWorld);
-      TypeMask actualType = node.instructionType;
-      TypeMask resultType = _abstractValueDomain.positiveIntType;
+      AbstractValue actualType = node.instructionType;
+      AbstractValue resultType = _abstractValueDomain.positiveIntType;
       // If we already have computed a more specific type, keep that type.
-      if (_abstractValueDomain.isInstanceOf(
+      if (_abstractValueDomain.isInstanceOfOrNull(
           actualType, commonElements.jsUInt31Class)) {
         resultType = _abstractValueDomain.uint31Type;
-      } else if (_abstractValueDomain.isInstanceOf(
+      } else if (_abstractValueDomain.isInstanceOfOrNull(
           actualType, commonElements.jsUInt32Class)) {
         resultType = _abstractValueDomain.uint32Type;
       }
@@ -405,12 +406,13 @@ class SsaInstructionSimplifier extends HBaseVisitor
     if (instruction != null) return instruction;
 
     Selector selector = node.selector;
-    TypeMask mask = node.mask;
+    AbstractValue mask = node.mask;
     HInstruction input = node.inputs[1];
 
     bool applies(MemberEntity element) {
       return selector.applies(element) &&
-          (mask == null || mask.canHit(element, selector, _closedWorld));
+          (mask == null ||
+              _abstractValueDomain.canHit(mask, element, selector));
     }
 
     if (selector.isCall || selector.isOperator) {
@@ -427,7 +429,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
         }
       } else if (input.isStringOrNull(_abstractValueDomain)) {
         if (commonElements.appliesToJsStringSplit(
-            selector, mask, _closedWorld)) {
+            selector, mask, _abstractValueDomain)) {
           return handleStringSplit(node);
         } else if (applies(commonElements.jsStringOperatorAdd)) {
           // `operator+` is turned into a JavaScript '+' so we need to
@@ -485,7 +487,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
     //     t4 = setRuntimeTypeInfo(t1, t3);
     //
 
-    TypeMask resultMask = _abstractValueDomain.growableListType;
+    AbstractValue resultMask = _abstractValueDomain.growableListType;
 
     HInvokeDynamicMethod splitInstruction = new HInvokeDynamicMethod(
         node.selector,
@@ -540,7 +542,8 @@ class SsaInstructionSimplifier extends HBaseVisitor
       if (folded != node) return folded;
     }
 
-    TypeMask receiverType = node.getDartReceiver(_closedWorld).instructionType;
+    AbstractValue receiverType =
+        node.getDartReceiver(_closedWorld).instructionType;
     MemberEntity element =
         _closedWorld.locateSingleMember(node.selector, receiverType);
     // TODO(ngeoffray): Also fold if it's a getter or variable.
@@ -578,7 +581,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
       if (!_nativeData.isNativeMember(field) &&
           !node.isCallOnInterceptor(_closedWorld)) {
         HInstruction receiver = node.getDartReceiver(_closedWorld);
-        TypeMask type = TypeMaskFactory.inferredTypeForMember(
+        AbstractValue type = AbstractValueFactory.inferredTypeForMember(
             // ignore: UNNECESSARY_CAST
             field as Entity,
             _globalInferenceResults);
@@ -650,8 +653,8 @@ class SsaInstructionSimplifier extends HBaseVisitor
     // dependent instructions.
     native.NativeBehavior nativeBehavior =
         _nativeData.getNativeMethodBehavior(method);
-    TypeMask returnType =
-        TypeMaskFactory.fromNativeBehavior(nativeBehavior, _closedWorld);
+    AbstractValue returnType =
+        AbstractValueFactory.fromNativeBehavior(nativeBehavior, _closedWorld);
     HInvokeDynamicMethod result = new HInvokeDynamicMethod(
         node.selector,
         node.mask,
@@ -744,8 +747,8 @@ class SsaInstructionSimplifier extends HBaseVisitor
   HInstruction handleIdentityCheck(HRelational node) {
     HInstruction left = node.left;
     HInstruction right = node.right;
-    TypeMask leftType = left.instructionType;
-    TypeMask rightType = right.instructionType;
+    AbstractValue leftType = left.instructionType;
+    AbstractValue rightType = right.instructionType;
 
     HInstruction makeTrue() => _graph.addConstantBool(true, _closedWorld);
     HInstruction makeFalse() => _graph.addConstantBool(false, _closedWorld);
@@ -754,7 +757,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
     // we don't optimize on numbers to preserve the runtime semantics.
     if (!(left.isNumberOrNull(_abstractValueDomain) &&
         right.isNumberOrNull(_abstractValueDomain))) {
-      if (leftType.isDisjoint(rightType, _closedWorld)) {
+      if (_abstractValueDomain.areDisjoint(leftType, rightType)) {
         return makeFalse();
       }
     }
@@ -909,14 +912,12 @@ class SsaInstructionSimplifier extends HBaseVisitor
       // a class [:A<T>:], is currently always considered to have the
       // raw type.
     } else if (!RuntimeTypesSubstitutions.hasTypeArguments(type)) {
-      TypeMask expressionMask = expression.instructionType;
-      assert(TypeMask.assertIsNormalized(expressionMask, _closedWorld));
-      TypeMask typeMask = (element == commonElements.nullClass)
-          ? new TypeMask.subtype(element, _closedWorld)
-          : new TypeMask.nonNullSubtype(element, _closedWorld);
-      if (expressionMask.union(typeMask, _closedWorld) == typeMask) {
+      AbstractValue expressionMask = expression.instructionType;
+      AbstractBool isInstanceOf =
+          _abstractValueDomain.isInstanceOf(expressionMask, element);
+      if (isInstanceOf == AbstractBool.True) {
         return _graph.addConstantBool(true, _closedWorld);
-      } else if (expressionMask.isDisjoint(typeMask, _closedWorld)) {
+      } else if (isInstanceOf == AbstractBool.False) {
         return _graph.addConstantBool(false, _closedWorld);
       }
     }
@@ -924,59 +925,16 @@ class SsaInstructionSimplifier extends HBaseVisitor
   }
 
   HInstruction visitTypeConversion(HTypeConversion node) {
-    DartType type = node.typeExpression;
-    if (type != null) {
-      if (type.isMalformed) {
-        // Malformed types are treated as dynamic statically, but should
-        // throw a type error at runtime.
-        return node;
-      }
-      if (type.isTypeVariable) {
-        return node;
-      }
-      if (type.isFutureOr) {
-        HInstruction input = node.checkedInput;
-        // `null` always passes type conversion.
-        if (input.isNull(_abstractValueDomain)) return input;
-        // TODO(johnniwinther): Optimize FutureOr type conversions.
-        return node;
-      }
-      if (!type.treatAsRaw) {
-        HInstruction input = node.checkedInput;
-        // `null` always passes type conversion.
-        if (input.isNull(_abstractValueDomain)) return input;
-        // TODO(sra): We can statically check [input] if it is a constructor.
-        // TODO(sra): We can statically check [input] if it is load from a field
-        // of the same ground type, or load from a field of a parameterized type
-        // with the same receiver.
-        return node;
-      }
-      if (type.isFunctionType) {
-        HInstruction input = node.checkedInput;
-        // `null` always passes type conversion.
-        if (input.isNull(_abstractValueDomain)) return input;
-        // TODO(johnniwinther): Optimize function type conversions.
-        // TODO(sra): We can statically check [input] if it is a closure getter.
-        return node;
-      }
-    }
-    return removeIfCheckAlwaysSucceeds(node, node.checkedType);
+    return node.isRedundant(_closedWorld) ? node.checkedInput : node;
   }
 
   HInstruction visitTypeKnown(HTypeKnown node) {
-    return removeIfCheckAlwaysSucceeds(node, node.knownType);
-  }
-
-  HInstruction removeIfCheckAlwaysSucceeds(HCheck node, TypeMask checkedType) {
-    if (checkedType.containsAll(_closedWorld)) return node;
-    HInstruction input = node.checkedInput;
-    TypeMask inputType = input.instructionType;
-    return inputType.isInMask(checkedType, _closedWorld) ? input : node;
+    return node.isRedundant(_closedWorld) ? node.checkedInput : node;
   }
 
   FieldEntity findConcreteFieldForDynamicAccess(
       HInstruction receiver, Selector selector) {
-    TypeMask receiverType = receiver.instructionType;
+    AbstractValue receiverType = receiver.instructionType;
     return _closedWorld.locateSingleField(selector, receiverType);
   }
 
@@ -1047,7 +1005,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
       List<ConstantValue> entries = list.entries;
       HConstant indexInstruction = node.index;
       IntConstantValue indexConstant = indexInstruction.constant;
-      int index = indexConstant.intValue;
+      int index = indexConstant.intValue.toInt();
       if (index >= 0 && index < entries.length) {
         return _graph.addConstant(entries[index], _closedWorld);
       }
@@ -1085,12 +1043,12 @@ class SsaInstructionSimplifier extends HBaseVisitor
   HInstruction directFieldGet(HInstruction receiver, FieldEntity field) {
     bool isAssignable = !_closedWorld.fieldNeverChanges(field);
 
-    TypeMask type;
+    AbstractValue type;
     if (_nativeData.isNativeClass(field.enclosingClass)) {
-      type = TypeMaskFactory.fromNativeBehavior(
+      type = AbstractValueFactory.fromNativeBehavior(
           _nativeData.getNativeFieldLoadBehavior(field), _closedWorld);
     } else {
-      type = TypeMaskFactory.inferredTypeForMember(
+      type = AbstractValueFactory.inferredTypeForMember(
           // ignore: UNNECESSARY_CAST
           field as Entity,
           _globalInferenceResults);
@@ -1316,14 +1274,15 @@ class SsaInstructionSimplifier extends HBaseVisitor
       if (input.canBePrimitive(_abstractValueDomain)) return null;
       if (input.canBeNull(_abstractValueDomain)) return null;
       Selector selector = Selectors.toString_;
-      TypeMask toStringType = TypeMaskFactory.inferredTypeForSelector(
+      AbstractValue toStringType = AbstractValueFactory.inferredTypeForSelector(
           selector, input.instructionType, _globalInferenceResults);
-      if (!toStringType.containsOnlyString(_closedWorld)) return null;
+      if (!_abstractValueDomain.containsOnlyType(
+          toStringType, _closedWorld.commonElements.jsStringClass)) {
+        return null;
+      }
       // All intercepted classes extend `Interceptor`, so if the receiver can't
       // be a class extending `Interceptor` then it can be called directly.
-      if (new TypeMask.nonNullSubclass(
-              commonElements.jsInterceptorClass, _closedWorld)
-          .isDisjoint(input.instructionType, _closedWorld)) {
+      if (!_abstractValueDomain.canBeInterceptor(input.instructionType)) {
         var inputs = <HInstruction>[input, input]; // [interceptor, receiver].
         HInstruction result = new HInvokeDynamicMethod(
             selector,
@@ -1530,9 +1489,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
       // be a class extending `Interceptor` then the substitution methods can be
       // called directly. (We don't care about Null since contexts reading class
       // type variables originate from instance methods.)
-      if (new TypeMask.nonNullSubclass(
-              commonElements.jsInterceptorClass, _closedWorld)
-          .isDisjoint(object.instructionType, _closedWorld)) {
+      if (!_abstractValueDomain.canBeInterceptor(object.instructionType)) {
         return new HTypeInfoReadVariable.noInterceptor(
             variable, object, node.instructionType);
       }
@@ -1545,7 +1502,7 @@ class SsaInstructionSimplifier extends HBaseVisitor
 class SsaCheckInserter extends HBaseVisitor implements OptimizationPhase {
   final Set<HInstruction> boundsChecked;
   final bool trustPrimitives;
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
   final String name = "SsaCheckInserter";
   HGraph graph;
 
@@ -1581,7 +1538,7 @@ class SsaCheckInserter extends HBaseVisitor implements OptimizationPhase {
         isAssignable: !isFixedLength(array.instructionType, closedWorld));
     indexNode.block.addBefore(indexNode, length);
 
-    TypeMask type = indexArgument.isPositiveInteger(_abstractValueDomain)
+    AbstractValue type = indexArgument.isPositiveInteger(_abstractValueDomain)
         ? indexArgument.instructionType
         : closedWorld.abstractValueDomain.positiveIntType;
     HBoundsCheck check = new HBoundsCheck(indexArgument, length, array, type)
@@ -1631,7 +1588,7 @@ class SsaCheckInserter extends HBaseVisitor implements OptimizationPhase {
 class SsaDeadCodeEliminator extends HGraphVisitor implements OptimizationPhase {
   final String name = "SsaDeadCodeEliminator";
 
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
   final SsaOptimizerTask optimizer;
   HGraph _graph;
   SsaLiveBlockAnalyzer analyzer;
@@ -1649,7 +1606,7 @@ class SsaDeadCodeEliminator extends HGraphVisitor implements OptimizationPhase {
     if (zapInstructionCache == null) {
       // A constant with no type does not pollute types at phi nodes.
       ConstantValue constant = new SyntheticConstantValue(
-          SyntheticConstantKind.EMPTY_VALUE, const TypeMask.nonNullEmpty());
+          SyntheticConstantKind.EMPTY_VALUE, _abstractValueDomain.emptyType);
       zapInstructionCache = analyzer.graph.addConstant(constant, closedWorld);
     }
     return zapInstructionCache;
@@ -1977,7 +1934,7 @@ class SsaLiveBlockAnalyzer extends HBaseVisitor {
   final Set<HBasicBlock> live = new Set<HBasicBlock>();
   final List<HBasicBlock> worklist = <HBasicBlock>[];
   final SsaOptimizerTask optimizer;
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
 
   SsaLiveBlockAnalyzer(this.graph, this.closedWorld, this.optimizer);
 
@@ -2028,20 +1985,20 @@ class SsaLiveBlockAnalyzer extends HBaseVisitor {
           switchRange.upper is IntValue) {
         IntValue lowerValue = switchRange.lower;
         IntValue upperValue = switchRange.upper;
-        int lower = lowerValue.value;
-        int upper = upperValue.value;
-        Set<int> liveLabels = new Set<int>();
+        BigInt lower = lowerValue.value;
+        BigInt upper = upperValue.value;
+        Set<BigInt> liveLabels = new Set<BigInt>();
         for (int pos = 1; pos < node.inputs.length; pos++) {
           HConstant input = node.inputs[pos];
           if (!input.isConstantInteger()) continue;
           IntConstantValue constant = input.constant;
-          int label = constant.intValue;
+          BigInt label = constant.intValue;
           if (!liveLabels.contains(label) && label <= upper && label >= lower) {
             markBlockLive(node.block.successors[pos - 1]);
             liveLabels.add(label);
           }
         }
-        if (liveLabels.length != upper - lower + 1) {
+        if (new BigInt.from(liveLabels.length) != upper - lower + BigInt.one) {
           markBlockLive(node.defaultTarget);
         }
         return;
@@ -2485,7 +2442,7 @@ class SsaCodeMotion extends HBaseVisitor implements OptimizationPhase {
 class SsaTypeConversionInserter extends HBaseVisitor
     implements OptimizationPhase {
   final String name = "SsaTypeconversionInserter";
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
 
   SsaTypeConversionInserter(this.closedWorld);
 
@@ -2501,7 +2458,7 @@ class SsaTypeConversionInserter extends HBaseVisitor
   // on the control flow, we mark the inserted [HTypeKnown] nodes as
   // non-movable.
   void insertTypePropagationForDominatedUsers(
-      HBasicBlock dominator, HInstruction input, TypeMask convertedType) {
+      HBasicBlock dominator, HInstruction input, AbstractValue convertedType) {
     DominatedUses dominatedUses = DominatedUses.of(input, dominator.first);
     if (dominatedUses.isEmpty) return;
 
@@ -2540,7 +2497,8 @@ class SsaTypeConversionInserter extends HBaseVisitor
 
     if (trueTargets.isEmpty && falseTargets.isEmpty) return;
 
-    TypeMask convertedType = new TypeMask.nonNullSubtype(cls, closedWorld);
+    AbstractValue convertedType =
+        _abstractValueDomain.createNonNullSubtype(cls);
     HInstruction input = instruction.expression;
 
     for (HBasicBlock block in trueTargets) {
@@ -2573,7 +2531,7 @@ class SsaTypeConversionInserter extends HBaseVisitor
 
     if (trueTargets.isEmpty && falseTargets.isEmpty) return;
 
-    TypeMask nonNullType =
+    AbstractValue nonNullType =
         _abstractValueDomain.excludeNull(input.instructionType);
 
     for (HBasicBlock block in falseTargets) {
@@ -2627,7 +2585,7 @@ class SsaTypeConversionInserter extends HBaseVisitor
  */
 class SsaLoadElimination extends HBaseVisitor implements OptimizationPhase {
   final Compiler compiler;
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
   final String name = "SsaLoadElimination";
   MemorySet memorySet;
   List<MemorySet> memories;
@@ -2885,7 +2843,7 @@ enum MemoryFeature {
 /// confuse aliasing.  Values stored into a memory place keep the type
 /// refinements to help further optimizations.
 class MemorySet {
-  final ClosedWorld closedWorld;
+  final JClosedWorld closedWorld;
 
   /// Maps a field to a map of receivers to their current field values.
   ///
@@ -3125,7 +3083,7 @@ class MemorySet {
         }
       }
     }
-    TypeMask phiType = _abstractValueDomain.union(
+    AbstractValue phiType = _abstractValueDomain.union(
         second.instructionType, first.instructionType);
     if (first is HPhi && first.block == block) {
       HPhi phi = first;

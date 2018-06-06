@@ -33,7 +33,7 @@ import 'package:front_end/src/compute_platform_binaries_location.dart'
     show computePlatformBinariesLocation;
 import 'package:front_end/src/fasta/kernel/utils.dart';
 import 'package:front_end/src/fasta/hybrid_file_system.dart';
-import 'package:kernel/kernel.dart' show Component;
+import 'package:kernel/kernel.dart' show Component, Procedure;
 import 'package:kernel/target/targets.dart' show TargetFlags;
 import 'package:kernel/target/vm.dart' show VmTarget;
 import 'package:vm/incremental_compiler.dart';
@@ -49,10 +49,15 @@ const String platformKernelFile = 'virtual_platform_kernel.dill';
 //   1 - Update in-memory file system with in-memory sources (used by tests).
 //   2 - Accept last compilation result.
 //   3 - APP JIT snapshot training run for kernel_service.
+//   4 - Compile an individual expression in some context (for debugging
+//       purposes).
 const int kCompileTag = 0;
 const int kUpdateSourcesTag = 1;
 const int kAcceptTag = 2;
 const int kTrainTag = 3;
+const int kCompileExpressionTag = 4;
+
+bool allowDartInternalImport = false;
 
 abstract class Compiler {
   final FileSystem fileSystem;
@@ -173,13 +178,14 @@ class SingleShotCompilerWrapper extends Compiler {
   Future<Component> compileInternal(Uri script) async {
     return requireMain
         ? kernelForProgram(script, options)
-        : kernelForComponent([script], options..chaseDependencies = true);
+        : kernelForComponent([script], options);
   }
 }
 
-final Map<int, Compiler> isolateCompilers = new Map<int, Compiler>();
+final Map<int, IncrementalCompilerWrapper> isolateCompilers =
+    new Map<int, IncrementalCompilerWrapper>();
 
-Compiler lookupIncrementalCompiler(int isolateId) {
+IncrementalCompilerWrapper lookupIncrementalCompiler(int isolateId) {
   return isolateCompilers[isolateId];
 }
 
@@ -242,10 +248,62 @@ void invalidateSources(IncrementalCompilerWrapper compiler, List sourceFiles) {
 
 // Process a request from the runtime. See KernelIsolate::CompileToKernel in
 // kernel_isolate.cc and Loader::SendKernelRequest in loader.cc.
+Future _processExpressionCompilationRequest(request) async {
+  final SendPort port = request[1];
+  final int isolateId = request[2];
+  final String expression = request[3];
+  final List definitions = request[4];
+  final List typeDefinitions = request[5];
+  final String libraryUri = request[6];
+  final String klass = request[7]; // might be null
+  final bool isStatic = request[8];
+
+  IncrementalCompilerWrapper compiler = isolateCompilers[isolateId];
+
+  if (compiler == null) {
+    port.send(new CompilationResult.errors(
+            ["No incremental compiler available for this isolate."], null)
+        .toResponse());
+    return;
+  }
+
+  compiler.errors.clear();
+
+  CompilationResult result;
+  try {
+    Procedure procedure = await compiler.generator.compileExpression(
+        expression, definitions, typeDefinitions, libraryUri, klass, isStatic);
+
+    if (procedure == null) {
+      port.send(
+          new CompilationResult.errors(["Invalid scope."], null).toResponse());
+      return;
+    }
+
+    if (compiler.errors.isNotEmpty) {
+      // TODO(sigmund): the compiler prints errors to the console, so we
+      // shouldn't print those messages again here.
+      result = new CompilationResult.errors(compiler.errors, null);
+    } else {
+      result = new CompilationResult.ok(serializeProcedure(procedure));
+    }
+  } catch (error, stack) {
+    result = new CompilationResult.crash(error, stack);
+  }
+
+  port.send(result.toResponse());
+}
+
 Future _processLoadRequest(request) async {
   if (verbose) print("DFE: request: $request");
 
   int tag = request[0];
+
+  if (tag == kCompileExpressionTag) {
+    await _processExpressionCompilationRequest(request);
+    return;
+  }
+
   final SendPort port = request[1];
   final String inputFileUri = request[2];
   final Uri script =
@@ -331,7 +389,8 @@ Future _processLoadRequest(request) async {
     Component component = await compiler.compile(script);
 
     if (compiler.errors.isNotEmpty) {
-      result = new CompilationResult.errors(compiler.errors);
+      result = new CompilationResult.errors(compiler.errors,
+          serializeComponent(component, filter: (lib) => !lib.isExternal));
     } else {
       // We serialize the component excluding vm_platform.dill because the VM has
       // these sources built-in. Everything loaded as a summary in
@@ -359,7 +418,7 @@ Future _processLoadRequest(request) async {
       inputFileUri,
       inputFileUri,
       null,
-      new CompilationResult.errors(<String>["unknown tag"]).payload
+      new CompilationResult.errors(<String>["unknown tag"], null).payload
     ]);
   }
 }
@@ -453,7 +512,8 @@ abstract class CompilationResult {
 
   factory CompilationResult.ok(Uint8List bytes) = _CompilationOk;
 
-  factory CompilationResult.errors(List<String> errors) = _CompilationError;
+  factory CompilationResult.errors(List<String> errors, Uint8List bytes) =
+      _CompilationError;
 
   factory CompilationResult.crash(Object exception, StackTrace stack) =
       _CompilationCrash;
@@ -489,9 +549,10 @@ abstract class _CompilationFail extends CompilationResult {
 }
 
 class _CompilationError extends _CompilationFail {
+  final Uint8List bytes;
   final List<String> errors;
 
-  _CompilationError(this.errors);
+  _CompilationError(this.errors, this.bytes);
 
   @override
   Status get status => Status.error;
@@ -500,6 +561,8 @@ class _CompilationError extends _CompilationFail {
   String get errorString => errors.take(10).join('\n');
 
   String toString() => "_CompilationError(${errorString})";
+
+  List toResponse() => [status.index, payload, bytes];
 }
 
 class _CompilationCrash extends _CompilationFail {

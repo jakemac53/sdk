@@ -614,9 +614,7 @@ int ARM64Decoder::FormatOption(Instr* instr, const char* format) {
       } else if (format[1] == 'f') {
         ASSERT(STRING_STARTS_WITH(format, "sf"));
         if (instr->SFField() == 1) {
-          // TODO(zra): If we don't use the w form much, we can omit printing
-          // this x.
-          Print("x");
+          // 64-bit width is most commonly used, no need to print "x".
         } else {
           Print("w");
         }
@@ -888,8 +886,11 @@ void ARM64Decoder::DecodeExceptionGen(Instr* instr) {
              (instr->Bits(21, 3) == 1)) {
     Format(instr, "brk 'imm16");
     if (instr->Imm16Field() == Instr::kStopMessageCode) {
-      const char* message = *reinterpret_cast<const char**>(
-          reinterpret_cast<intptr_t>(instr) - 2 * Instr::kInstrSize);
+      const char* message = "Stop messages not enabled";
+      if (FLAG_print_stop_message) {
+        message = *reinterpret_cast<const char**>(
+            reinterpret_cast<intptr_t>(instr) - 2 * Instr::kInstrSize);
+      }
       buffer_pos_ +=
           Utils::SNPrint(current_position_in_buffer(),
                          remaining_size_in_buffer(), " ; \"%s\"", message);
@@ -1142,13 +1143,13 @@ void ARM64Decoder::DecodeMiscDP3Source(Instr* instr) {
   int32_t mask = B31 | B30 | B29 | B23 | B22 | B21 | B15 | MiscDP3SourceMask;
   int32_t bits = instr->InstructionBits() & mask;
 
-  if (bits == MADD) {
+  if (bits == MADD || bits == MADDW) {
     if (zero_operand) {
       Format(instr, "mul'sf 'rd, 'rn, 'rm");
     } else {
       Format(instr, "madd'sf 'rd, 'rn, 'rm, 'ra");
     }
-  } else if (bits == MSUB) {
+  } else if (bits == MSUB || bits == MSUBW) {
     if (zero_operand) {
       Format(instr, "mneg'sf 'rd, 'rn, 'rm");
     } else {

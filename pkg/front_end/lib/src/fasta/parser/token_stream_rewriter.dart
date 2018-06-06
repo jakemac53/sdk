@@ -3,7 +3,13 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import '../../scanner/token.dart'
-    show BeginToken, SimpleToken, Token, TokenType;
+    show
+        BeginToken,
+        SimpleToken,
+        SyntheticStringToken,
+        SyntheticToken,
+        Token,
+        TokenType;
 
 import 'util.dart' show optional;
 
@@ -32,6 +38,18 @@ class TokenStreamRewriter {
 
   /// Initialize a newly created re-writer.
   TokenStreamRewriter();
+
+  /// Insert a synthetic identifier after [token] and return the new identifier.
+  Token insertSyntheticIdentifier(Token token) {
+    Token identifier = new SyntheticStringToken(
+        TokenType.IDENTIFIER, '', token.next.charOffset, 0)
+      ..setNext(token.next);
+
+    // A no-op rewriter could simply return the synthetic identifier here.
+
+    token.setNext(identifier);
+    return identifier;
+  }
 
   /// Insert the chain of tokens starting at the [insertedToken] immediately
   /// after the [previousToken]. Return the [previousToken].
@@ -73,31 +91,48 @@ class TokenStreamRewriter {
     return replacementToken;
   }
 
-  /// Split a `>>` token into two separate `>` tokens and return the first `>`.
-  /// This sets [start].endGroup to the second `>` and updates the token stream,
-  /// but does not set the inner group's endGroup.
-  Token splitGtGt(BeginToken start) {
-    Token gtgt = start.endGroup;
-    assert(gtgt != null);
-    assert(optional('>>', gtgt));
+  /// Split a `>>` token into two separate `>` tokens, updates the token stream,
+  /// and returns the first `>`. If [start].endGroup is `>>` then sets
+  /// [start].endGroup to the second `>` but does not set the inner group's
+  /// endGroup, otherwise sets [start].endGroup to the first `>`.
+  Token splitEndGroup(BeginToken start, [Token end]) {
+    end ??= start.endGroup;
+    assert(end != null);
 
-    // A no-op rewriter could simply return `>>` here.
-
-    Token gt1 =
-        new SimpleToken(TokenType.GT, gtgt.charOffset, gtgt.precedingComments);
-    Token gt2 = gt1.setNext(new SimpleToken(TokenType.GT, gt1.charOffset + 1));
-    gt2.setNext(gtgt.next);
+    Token gt;
+    if (optional('>>', end)) {
+      gt = new SimpleToken(TokenType.GT, end.charOffset, end.precedingComments)
+        ..setNext(new SimpleToken(TokenType.GT, end.charOffset + 1)
+          ..setNext(end.next));
+    } else if (optional('>=', end)) {
+      gt = new SimpleToken(TokenType.GT, end.charOffset, end.precedingComments)
+        ..setNext(new SimpleToken(TokenType.EQ, end.charOffset + 1)
+          ..setNext(end.next));
+    } else if (optional('>>=', end)) {
+      gt = new SimpleToken(TokenType.GT, end.charOffset, end.precedingComments)
+        ..setNext(new SimpleToken(TokenType.GT, end.charOffset + 1)
+          ..setNext(new SimpleToken(TokenType.EQ, end.charOffset + 2)
+            ..setNext(end.next)));
+    } else {
+      gt = new SyntheticToken(TokenType.GT, end.charOffset)..setNext(end);
+    }
 
     Token token = start;
     Token next = token.next;
-    while (!identical(next, gtgt)) {
+    while (!identical(next, end)) {
       token = next;
       next = token.next;
     }
-    token.setNext(gt1);
+    token.setNext(gt);
 
-    start.endGroup = gt2;
-    return gt1;
+    if (start.endGroup != null) {
+      assert(optional('>>', start.endGroup));
+      start.endGroup = gt.next;
+    } else {
+      // Recovery
+      start.endGroup = gt;
+    }
+    return gt;
   }
 
   /// Given the [firstToken] in a chain of tokens to be inserted, return the

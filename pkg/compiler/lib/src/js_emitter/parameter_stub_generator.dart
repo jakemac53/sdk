@@ -18,7 +18,7 @@ import '../universe/call_structure.dart' show CallStructure;
 import '../universe/selector.dart' show Selector;
 import '../universe/world_builder.dart'
     show CodegenWorldBuilder, SelectorConstraints;
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 
 import 'model.dart';
 
@@ -33,7 +33,7 @@ class ParameterStubGenerator {
   final NativeData _nativeData;
   final InterceptorData _interceptorData;
   final CodegenWorldBuilder _codegenWorldBuilder;
-  final ClosedWorld _closedWorld;
+  final JClosedWorld _closedWorld;
   final SourceInformationStrategy _sourceInformationStrategy;
 
   ParameterStubGenerator(
@@ -316,6 +316,33 @@ class ParameterStubGenerator {
             generateParameterStub(member, renamedSelector, selector);
         if (stub != null) {
           stubs.add(stub);
+        }
+      }
+
+      // A generic method might need to support `call<T>(x)` for a generic
+      // instantiation stub without `call<T>(x)` being in [callSelectors].
+      // [selector] will be `call(x)` (that already passes the appliesUnnamed
+      // check by defaulting type arguments), and the method will be generic.
+      //
+      // This is basically the same logic as above, but with type arguments.
+      if (selector.callStructure.typeArgumentCount == 0) {
+        ParameterStructure parameterStructure = member.parameterStructure;
+        if (parameterStructure.typeParameters > 0) {
+          Selector renamedSelectorWithTypeArguments = new Selector.call(
+              member.memberName,
+              selector.callStructure
+                  .withTypeArgumentCount(parameterStructure.typeParameters));
+          renamedCallSelectors.add(renamedSelectorWithTypeArguments);
+
+          if (stubSelectors.add(renamedSelectorWithTypeArguments)) {
+            Selector closureSelector =
+                new Selector.callClosureFrom(renamedSelectorWithTypeArguments);
+            ParameterStubMethod stub = generateParameterStub(
+                member, renamedSelectorWithTypeArguments, closureSelector);
+            if (stub != null) {
+              stubs.add(stub);
+            }
+          }
         }
       }
     }

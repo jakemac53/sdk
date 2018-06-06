@@ -8,6 +8,7 @@
 #include "vm/debugger_api_impl_test.h"
 #include "vm/globals.h"
 #include "vm/isolate.h"
+#include "vm/kernel_loader.h"
 #include "vm/lockers.h"
 #include "vm/thread_barrier.h"
 #include "vm/thread_pool.h"
@@ -123,15 +124,17 @@ TEST_CASE(IsolateReload_KernelIncrementalCompile) {
     }};
   // clang-format on
   {
-    void* kernel_pgm = NULL;
+    const uint8_t* kernel_buffer = NULL;
+    intptr_t kernel_buffer_size = 0;
     char* error = TestCase::CompileTestScriptWithDFE(
         "file:///test-app",
         sizeof(updated_sourcefiles) / sizeof(Dart_SourceFile),
-        updated_sourcefiles, &kernel_pgm, true /* incrementally */);
+        updated_sourcefiles, &kernel_buffer, &kernel_buffer_size,
+        true /* incrementally */);
     EXPECT(error == NULL);
-    EXPECT_NOTNULL(kernel_pgm);
+    EXPECT_NOTNULL(kernel_buffer);
 
-    lib = TestCase::ReloadTestKernel(kernel_pgm);
+    lib = TestCase::ReloadTestKernel(kernel_buffer, kernel_buffer_size);
     EXPECT_VALID(lib);
   }
   result = Dart_Invoke(lib, NewString("main"), 0, NULL);
@@ -182,15 +185,17 @@ TEST_CASE(IsolateReload_KernelIncrementalCompileAppAndLib) {
     }};
   // clang-format on
   {
-    void* kernel_pgm = NULL;
+    const uint8_t* kernel_buffer = NULL;
+    intptr_t kernel_buffer_size = 0;
     char* error = TestCase::CompileTestScriptWithDFE(
         "file:///test-app.dart",
         sizeof(updated_sourcefiles) / sizeof(Dart_SourceFile),
-        updated_sourcefiles, &kernel_pgm, true /* incrementally */);
+        updated_sourcefiles, &kernel_buffer, &kernel_buffer_size,
+        true /* incrementally */);
     EXPECT(error == NULL);
-    EXPECT_NOTNULL(kernel_pgm);
+    EXPECT_NOTNULL(kernel_buffer);
 
-    lib = TestCase::ReloadTestKernel(kernel_pgm);
+    lib = TestCase::ReloadTestKernel(kernel_buffer, kernel_buffer_size);
     EXPECT_VALID(lib);
   }
   result = Dart_Invoke(lib, NewString("main"), 0, NULL);
@@ -257,15 +262,17 @@ TEST_CASE(IsolateReload_KernelIncrementalCompileGenerics) {
     }};
   // clang-format on
   {
-    void* kernel_pgm = NULL;
+    const uint8_t* kernel_buffer = NULL;
+    intptr_t kernel_buffer_size = 0;
     char* error = TestCase::CompileTestScriptWithDFE(
         "file:///test-app.dart",
         sizeof(updated_sourcefiles) / sizeof(Dart_SourceFile),
-        updated_sourcefiles, &kernel_pgm, true /* incrementally */);
+        updated_sourcefiles, &kernel_buffer, &kernel_buffer_size,
+        true /* incrementally */);
     EXPECT(error == NULL);
-    EXPECT_NOTNULL(kernel_pgm);
+    EXPECT_NOTNULL(kernel_buffer);
 
-    lib = TestCase::ReloadTestKernel(kernel_pgm);
+    lib = TestCase::ReloadTestKernel(kernel_buffer, kernel_buffer_size);
     EXPECT_VALID(lib);
   }
   result = Dart_Invoke(lib, NewString("main"), 0, NULL);
@@ -512,15 +519,15 @@ TEST_CASE(IsolateReload_LibraryImportAdded) {
       "  return max(3, 4);\n"
       "}\n";
 
-  Dart_Handle lib = TestCase::LoadTestScript(kScript, NULL);
-  EXPECT_VALID(lib);
-  EXPECT_ERROR(SimpleInvokeError(lib, "main"), "max");
-
   const char* kReloadScript =
       "import 'dart:math';\n"
       "main() {\n"
       "  return max(3, 4);\n"
       "}\n";
+
+  Dart_Handle lib = TestCase::LoadTestScriptWithErrors(kScript);
+  EXPECT_VALID(lib);
+  EXPECT_ERROR(SimpleInvokeError(lib, "main"), "max");
 
   lib = TestCase::ReloadTestScript(kReloadScript);
   EXPECT_VALID(lib);
@@ -544,8 +551,6 @@ TEST_CASE(IsolateReload_LibraryImportRemoved) {
       "}\n";
 
   lib = TestCase::ReloadTestScript(kReloadScript);
-  EXPECT_VALID(lib);
-
   EXPECT_ERROR(SimpleInvokeError(lib, "main"), "max");
 }
 
@@ -1029,7 +1034,7 @@ TEST_CASE(IsolateReload_LibraryHide) {
 
   // Dart_Handle result;
 
-  Dart_Handle lib = TestCase::LoadTestScript(kScript, NULL);
+  Dart_Handle lib = TestCase::LoadTestScriptWithErrors(kScript);
   EXPECT_VALID(lib);
   EXPECT_ERROR(SimpleInvokeError(lib, "main"), "importedFunc");
 
@@ -1062,7 +1067,7 @@ TEST_CASE(IsolateReload_LibraryShow) {
       "  return importedIntFunc();\n"
       "}\n";
 
-  Dart_Handle lib = TestCase::LoadTestScript(kScript, NULL);
+  Dart_Handle lib = TestCase::LoadTestScriptWithErrors(kScript);
   EXPECT_VALID(lib);
 
   // Works.
@@ -1082,12 +1087,15 @@ TEST_CASE(IsolateReload_LibraryShow) {
       "}\n";
 
   lib = TestCase::ReloadTestScript(kReloadScript);
-  EXPECT_VALID(lib);
-
-  // Works.
-  EXPECT_STREQ("a", SimpleInvokeStr(lib, "main"));
-  // Results in an error.
-  EXPECT_ERROR(SimpleInvokeError(lib, "mainInt"), "importedIntFunc");
+  if (TestCase::UsingDartFrontend() && TestCase::UsingStrongMode()) {
+    EXPECT_ERROR(lib, "importedIntFunc");
+  } else {
+    EXPECT_VALID(lib);
+    // Works.
+    EXPECT_STREQ("a", SimpleInvokeStr(lib, "main"));
+    // Results in an error.
+    EXPECT_ERROR(SimpleInvokeError(lib, "mainInt"), "importedIntFunc");
+  }
 }
 
 // Verifies that we clear the ICs for the functions live on the stack in a way
@@ -1615,7 +1623,7 @@ TEST_CASE(IsolateReload_TearOff_Parameter_Count_Mismatch) {
   if (TestCase::UsingStrongMode()) {
     error =
         "file:///test-lib:8:12: Error: Too few positional"
-        " arguments to function: 1 required, 0 given.\n"
+        " arguments: 1 required, 0 given.\n"
         "  return f1();";
   } else if (TestCase::UsingDartFrontend()) {
     error =

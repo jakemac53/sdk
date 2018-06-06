@@ -56,6 +56,7 @@ Future<Component> compileToKernel(Uri source, CompilerOptions options,
     List<String> entryPoints,
     Map<String, String> environmentDefines,
     bool genBytecode: false,
+    bool dropAST: false,
     bool enableAsserts: false,
     bool enableConstantEvaluation: true}) async {
   // Replace error handler to detect if there are compilation errors.
@@ -84,7 +85,8 @@ Future<Component> compileToKernel(Uri source, CompilerOptions options,
   options.onProblem = errorDetector.previousErrorHandler;
 
   if (genBytecode && component != null) {
-    generateBytecode(component, strongMode: options.strongMode);
+    generateBytecode(component,
+        strongMode: options.strongMode, dropAST: dropAST);
   }
 
   return component;
@@ -115,17 +117,17 @@ Future _runGlobalTransformations(
     // when building a platform dill file for VM/JIT case.
     mixin_deduplication.transformComponent(component);
 
-    if (useGlobalTypeFlowAnalysis) {
-      globalTypeFlow.transformComponent(coreTypes, component, entryPoints);
-    } else {
-      devirtualization.transformComponent(coreTypes, component);
-    }
-
     if (enableConstantEvaluation) {
       await _performConstantEvaluation(source, compilerOptions, component,
           coreTypes, environmentDefines, strongMode, enableAsserts);
 
       if (errorDetector.hasCompilationErrors) return;
+    }
+
+    if (useGlobalTypeFlowAnalysis) {
+      globalTypeFlow.transformComponent(coreTypes, component, entryPoints);
+    } else {
+      devirtualization.transformComponent(coreTypes, component);
     }
 
     no_dynamic_invocations_annotator.transformComponent(component);
@@ -143,8 +145,7 @@ Future _performConstantEvaluation(
   final vmConstants =
       new vm_constants.VmConstantsBackend(environmentDefines, coreTypes);
 
-  final processedOptions =
-      new ProcessedOptions(compilerOptions, false, [source]);
+  final processedOptions = new ProcessedOptions(compilerOptions, [source]);
 
   // Run within the context, so we have uri source tokens...
   await CompilerContext.runWithOptions(processedOptions,
@@ -157,14 +158,12 @@ Future _performConstantEvaluation(
     final typeEnvironment =
         new TypeEnvironment(coreTypes, hierarchy, strongMode: strongMode);
 
-    // NOTE: Currently we keep fields, because there are certain constant
-    // fields which the VM accesses (e.g. `_Random._A` needs to be preserved).
-    // TODO(kustermann): We should use the entrypoints manifest to find out
-    // which fields need to be preserved and remove the rest.
+    // TFA will remove constants fields which are unused (and respects the
+    // vm/embedder entrypoints).
     constants.transformComponent(component, vmConstants,
         keepFields: true,
         strongMode: true,
-        evaluateAnnotations: false,
+        evaluateAnnotations: true,
         enableAsserts: enableAsserts,
         errorReporter:
             new ForwardConstantEvaluationErrors(context, typeEnvironment));

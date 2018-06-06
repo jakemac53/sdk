@@ -84,13 +84,15 @@ DEFINE_FLAG_HANDLER(CheckedModeHandler, checked, "Enable checked mode.");
 
 static void DeterministicModeHandler(bool value) {
   if (value) {
-    FLAG_background_compilation = false;
-    FLAG_collect_code = false;
+    FLAG_background_compilation = false;  // Timing dependent.
+    FLAG_collect_code = false;            // Timing dependent.
     FLAG_random_seed = 0x44617274;  // "Dart"
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
     FLAG_load_deferred_eagerly = true;
+    FLAG_print_stop_message = false;  // Embedds addresses in instructions.
 #else
     COMPILE_ASSERT(FLAG_load_deferred_eagerly);
+    COMPILE_ASSERT(!FLAG_print_stop_message);
 #endif
   }
 }
@@ -801,6 +803,8 @@ void Isolate::FlagsCopyFrom(const Dart_IsolateFlags& api_flags) {
 #define FLAG_FOR_NONPRODUCT(action)
 #endif
 
+#define FLAG_FOR_PRODUCT(action) action
+
 #define SET_FROM_FLAG(when, name, bitname, isolate_flag, flag)                 \
   FLAG_FOR_##when(isolate_flags_ = bitname##Bit::update(                       \
                       api_flags.isolate_flag, isolate_flags_));
@@ -809,6 +813,7 @@ void Isolate::FlagsCopyFrom(const Dart_IsolateFlags& api_flags) {
 
 #undef FLAG_FOR_NONPRODUCT
 #undef FLAG_FOR_PRECOMPILER
+#undef FLAG_FOR_PRODUCT
 #undef SET_FROM_FLAG
 
   set_use_dart_frontend(api_flags.use_dart_frontend);
@@ -1611,6 +1616,7 @@ static void ShutdownIsolate(uword parameter) {
     if (!error.IsNull() && !error.IsUnwindError()) {
       OS::PrintErr("in ShutdownIsolate: %s\n", error.ToErrorCString());
     }
+    TransitionVMToNative transition(thread);
     Dart::RunShutdownCallback();
   }
   // Shut the isolate down.
@@ -1841,6 +1847,7 @@ void Isolate::Shutdown() {
 
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
   if (FLAG_check_reloaded && is_runnable() && (this != Dart::vm_isolate()) &&
+      !KernelIsolate::IsKernelIsolate(this) &&
       !ServiceIsolate::IsServiceIsolateDescendant(this)) {
     if (!HasAttemptedReload()) {
       FATAL(
@@ -1881,7 +1888,7 @@ Isolate* Isolate::isolates_list_head_ = NULL;
 bool Isolate::creation_enabled_ = false;
 
 void Isolate::VisitObjectPointers(ObjectPointerVisitor* visitor,
-                                  bool validate_frames) {
+                                  ValidationPolicy validate_frames) {
   ASSERT(visitor != NULL);
 
   // Visit objects in the object store.
@@ -1959,7 +1966,7 @@ void Isolate::VisitObjectPointers(ObjectPointerVisitor* visitor,
 }
 
 void Isolate::VisitStackPointers(ObjectPointerVisitor* visitor,
-                                 bool validate_frames) {
+                                 ValidationPolicy validate_frames) {
   // Visit objects in all threads (e.g., Dart stack, handles in zones).
   thread_registry()->VisitObjectPointers(visitor, validate_frames);
 }

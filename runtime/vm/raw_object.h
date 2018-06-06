@@ -779,9 +779,10 @@ class RawClass : public RawObject {
     switch (kind) {
       case Snapshot::kFull:
       case Snapshot::kScript:
-      case Snapshot::kFullJIT:
       case Snapshot::kFullAOT:
         return reinterpret_cast<RawObject**>(&ptr()->direct_subclasses_);
+      case Snapshot::kFullJIT:
+        return reinterpret_cast<RawObject**>(&ptr()->dependent_code_);
       case Snapshot::kMessage:
       case Snapshot::kNone:
       case Snapshot::kInvalid:
@@ -888,7 +889,7 @@ class RawFunction : public RawObject {
   };
 
   static constexpr intptr_t kMaxFixedParametersBits = 15;
-  static constexpr intptr_t kMaxOptionalParametersBits = 15;
+  static constexpr intptr_t kMaxOptionalParametersBits = 14;
 
  private:
   // So that the SkippedCodeFunctions::DetachCode can null out the code fields.
@@ -951,8 +952,13 @@ class RawFunction : public RawObject {
   typedef BitField<uint32_t, bool, PackedIsNoSuchMethodForwarder::kNextBit, 1>
       PackedHasNamedOptionalParameters;
   typedef BitField<uint32_t,
-                   uint16_t,
+                   bool,
                    PackedHasNamedOptionalParameters::kNextBit,
+                   1>
+      BackgroundOptimizableBit;
+  typedef BitField<uint32_t,
+                   uint16_t,
+                   BackgroundOptimizableBit::kNextBit,
                    kMaxFixedParametersBits>
       PackedNumFixedParameters;
   typedef BitField<uint32_t,
@@ -1805,6 +1811,13 @@ class RawAbstractType : public RawInstance {
     kFinalizedInstantiated,    // Instantiated type ready for use.
     kFinalizedUninstantiated,  // Uninstantiated type ready for use.
   };
+
+  // Note: we don't handle this field in GC in any special way.
+  // Instead we rely on two things:
+  //   (1) GC not moving code objects and
+  //   (2) lifetime of optimized stubs exceeding that of types;
+  // Practically (2) means that optimized stubs never die because
+  // canonical types to which they are attached never die.
   uword type_test_stub_entry_point_;  // Accessed from generated code.
 
  private:

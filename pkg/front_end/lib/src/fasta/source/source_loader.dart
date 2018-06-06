@@ -20,7 +20,8 @@ import 'package:kernel/ast.dart'
         ProcedureKind,
         Supertype;
 
-import 'package:kernel/class_hierarchy.dart' show ClassHierarchy;
+import 'package:kernel/class_hierarchy.dart'
+    show ClassHierarchy, HandleAmbiguousSupertypes;
 
 import 'package:kernel/core_types.dart' show CoreTypes;
 
@@ -33,9 +34,10 @@ import '../../base/instrumentation.dart'
 
 import '../builder/builder.dart'
     show
-        Builder,
         ClassBuilder,
+        Declaration,
         EnumBuilder,
+        FieldBuilder,
         LibraryBuilder,
         NamedTypeBuilder,
         TypeBuilder;
@@ -114,6 +116,7 @@ class SourceLoader<L> extends Loader<L> {
   ClassHierarchy hierarchy;
   CoreTypes coreTypes;
 
+  @override
   TypeInferenceEngine typeInferenceEngine;
 
   InterfaceResolver interfaceResolver;
@@ -222,9 +225,10 @@ class SourceLoader<L> extends Loader<L> {
     if (token == null) return null;
     DietListener dietListener = createDietListener(library);
 
-    Builder parent = library;
+    Declaration parent = library;
     if (enclosingClass != null) {
-      Builder cls = dietListener.memberScope.lookup(enclosingClass, -1, null);
+      Declaration cls =
+          dietListener.memberScope.lookup(enclosingClass, -1, null);
       if (cls is ClassBuilder) {
         parent = cls;
         dietListener
@@ -303,7 +307,7 @@ class SourceLoader<L> extends Loader<L> {
       wasChanged = false;
       for (SourceLibraryBuilder exported in both) {
         for (Export export in exported.exporters) {
-          exported.exportScope.forEach((String name, Builder member) {
+          exported.exportScope.forEach((String name, Declaration member) {
             if (export.addToExportScope(name, member)) {
               wasChanged = true;
             }
@@ -332,15 +336,15 @@ class SourceLoader<L> extends Loader<L> {
     // TODO(sigmund): should be `covarint SourceLibraryBuilder`.
     builders.forEach((Uri uri, dynamic l) {
       SourceLibraryBuilder library = l;
-      Set<Builder> members = new Set<Builder>();
-      library.forEach((String name, Builder member) {
+      Set<Declaration> members = new Set<Declaration>();
+      library.forEach((String name, Declaration member) {
         while (member != null) {
           members.add(member);
           member = member.next;
         }
       });
       List<String> exports = <String>[];
-      library.exportScope.forEach((String name, Builder member) {
+      library.exportScope.forEach((String name, Declaration member) {
         while (member != null) {
           if (!members.contains(member)) {
             exports.add(name);
@@ -395,16 +399,16 @@ class SourceLoader<L> extends Loader<L> {
     ticker.logMs("Resolved $count type-variable bounds");
   }
 
-  void instantiateToBound(TypeBuilder dynamicType, TypeBuilder bottomType,
+  void computeDefaultTypes(TypeBuilder dynamicType, TypeBuilder bottomType,
       ClassBuilder objectClass) {
     int count = 0;
     builders.forEach((Uri uri, LibraryBuilder library) {
       if (library.loader == this) {
         count +=
-            library.instantiateToBound(dynamicType, bottomType, objectClass);
+            library.computeDefaultTypes(dynamicType, bottomType, objectClass);
       }
     });
-    ticker.logMs("Instantiated $count type variables to their bounds");
+    ticker.logMs("Computed default types for $count type variables");
   }
 
   void finishNativeMethods() {
@@ -552,10 +556,11 @@ class SourceLoader<L> extends Loader<L> {
       if (mixedInType != null) {
         bool isClassBuilder = false;
         if (mixedInType is NamedTypeBuilder) {
-          var builder = mixedInType.builder;
+          var builder = mixedInType.declaration;
           if (builder is ClassBuilder) {
             isClassBuilder = true;
-            for (Builder constructory in builder.constructors.local.values) {
+            for (Declaration constructory
+                in builder.constructors.local.values) {
               if (constructory.isConstructor && !constructory.isSynthetic) {
                 cls.addCompileTimeError(
                     templateIllegalMixinDueToConstructors
@@ -619,17 +624,38 @@ class SourceLoader<L> extends Loader<L> {
     return new Component()..libraries.addAll(libraries);
   }
 
+  List<Class> computeListOfLoaderClasses() {
+    List<Class> result = <Class>[];
+    builders.forEach((Uri uri, LibraryBuilder libraryBuilder) {
+      if (!libraryBuilder.isPart &&
+          !libraryBuilder.isPatch &&
+          (libraryBuilder.loader == this)) {
+        Library library = libraryBuilder.target;
+        result.addAll(library.classes);
+      }
+    });
+    return result;
+  }
+
   void computeHierarchy() {
     List<List> ambiguousTypesRecords = [];
-    hierarchy = new ClassHierarchy(computeFullComponent(),
-        onAmbiguousSupertypes: (Class cls, Supertype a, Supertype b) {
+    HandleAmbiguousSupertypes onAmbiguousSupertypes =
+        (Class cls, Supertype a, Supertype b) {
       if (ambiguousTypesRecords != null) {
         ambiguousTypesRecords.add([cls, a, b]);
       }
-    },
-        mixinInferrer: target.strongMode
-            ? new StrongModeMixinInferrer(this)
-            : new LegacyModeMixinInferrer());
+    };
+    if (hierarchy == null) {
+      hierarchy = new ClassHierarchy(computeFullComponent(),
+          onAmbiguousSupertypes: onAmbiguousSupertypes,
+          mixinInferrer: target.strongMode
+              ? new StrongModeMixinInferrer(this)
+              : new LegacyModeMixinInferrer());
+    } else {
+      hierarchy.onAmbiguousSupertypes = onAmbiguousSupertypes;
+      hierarchy.applyTreeChanges(const [], computeListOfLoaderClasses(),
+          reissueAmbiguousSupertypesFor: computeFullComponent());
+    }
     for (List record in ambiguousTypesRecords) {
       handleAmbiguousSupertypes(record[0], record[1], record[2]);
     }
@@ -642,7 +668,7 @@ class SourceLoader<L> extends Loader<L> {
     TypeEnvironment env = new TypeEnvironment(coreTypes, hierarchy,
         strongMode: target.strongMode);
 
-    if (cls.isSyntheticMixinImplementation) return;
+    if (cls.isAnonymousMixin) return;
 
     if (env.isSubtypeOf(a.asInterfaceType, b.asInterfaceType)) return;
     addProblem(
@@ -687,7 +713,7 @@ class SourceLoader<L> extends Loader<L> {
 
     for (SourceClassBuilder builder in sourceClasses) {
       if (builder.library.loader == this) {
-        builder.addNoSuchMethodForwarders(hierarchy);
+        builder.addNoSuchMethodForwarders(target, hierarchy);
       }
     }
     ticker.logMs("Added noSuchMethod forwarders");
@@ -698,11 +724,13 @@ class SourceLoader<L> extends Loader<L> {
         new ShadowTypeInferenceEngine(instrumentation, target.strongMode);
   }
 
-  /// Performs the first phase of top level initializer inference, which
-  /// consists of creating kernel objects for all fields and top level variables
-  /// that might be subject to type inference, and records dependencies between
-  /// them.
-  void prepareTopLevelInference(List<SourceClassBuilder> sourceClasses) {
+  void performTopLevelInference(List<SourceClassBuilder> sourceClasses) {
+    if (target.disableTypeInference) return;
+
+    /// The first phase of top level initializer inference, which consists of
+    /// creating kernel objects for all fields and top level variables that
+    /// might be subject to type inference, and records dependencies between
+    /// them.
     typeInferenceEngine.prepareTopLevel(coreTypes, hierarchy);
     interfaceResolver = new InterfaceResolver(
         typeInferenceEngine,
@@ -711,36 +739,60 @@ class SourceLoader<L> extends Loader<L> {
         target.strongMode);
     builders.forEach((Uri uri, LibraryBuilder library) {
       if (library.loader == this) {
-        library.prepareTopLevelInference(library, null);
+        library.forEach((String name, Declaration member) {
+          if (member is FieldBuilder) {
+            member.prepareTopLevelInference();
+          }
+        });
       }
     });
-    // Note: we need to create a list before iterating, since calling
-    // builder.prepareTopLevelInference causes further class hierarchy queries
-    // to be made which would otherwise result in a concurrent modification
-    // exception.
-    orderedClasses = hierarchy
-        .getOrderedClasses(sourceClasses.map((builder) => builder.target))
-        .map((class_) => ShadowClass.getClassInferenceInfo(class_).builder)
-        .toList();
-    for (var builder in orderedClasses) {
-      ShadowClass class_ = builder.target;
-      builder.prepareTopLevelInference(builder.library, builder);
-      class_.setupApiMembers(interfaceResolver);
+    {
+      // Note: we need to create a list before iterating, since calling
+      // builder.prepareTopLevelInference causes further class hierarchy
+      // queries to be made which would otherwise result in a concurrent
+      // modification exception.
+      List<Class> classes = new List<Class>(sourceClasses.length);
+      for (int i = 0; i < sourceClasses.length; i++) {
+        classes[i] = sourceClasses[i].target;
+      }
+      List<ClassBuilder> result = new List<ClassBuilder>(sourceClasses.length);
+      int i = 0;
+      for (Class cls in hierarchy.getOrderedClasses(classes)) {
+        result[i++] = ShadowClass.getClassInferenceInfo(cls).builder;
+      }
+      orderedClasses = result;
+    }
+    for (ClassBuilder cls in orderedClasses) {
+      cls.prepareTopLevelInference();
     }
     typeInferenceEngine.isTypeInferencePrepared = true;
     ticker.logMs("Prepared top level inference");
-  }
 
-  /// Performs the second phase of top level initializer inference, which is to
-  /// visit fields and top level variables in topologically-sorted order and
-  /// assign their types.
-  void performTopLevelInference(List<SourceClassBuilder> sourceClasses) {
+    /// The second phase of top level initializer inference, which is to visit
+    /// fields and top level variables in topologically-sorted order and assign
+    /// their types.
     typeInferenceEngine.finishTopLevelFields();
+    List<Class> changedClasses = new List<Class>();
     for (var builder in orderedClasses) {
       ShadowClass class_ = builder.target;
+      int memberCount = class_.fields.length +
+          class_.constructors.length +
+          class_.procedures.length +
+          class_.redirectingFactoryConstructors.length;
       class_.finalizeCovariance(interfaceResolver);
       ShadowClass.clearClassInferenceInfo(class_);
+      int newMemberCount = class_.fields.length +
+          class_.constructors.length +
+          class_.procedures.length +
+          class_.redirectingFactoryConstructors.length;
+      if (newMemberCount != memberCount) {
+        // The inference potentially adds new members (but doesn't otherwise
+        // change the classes), so if the member count has changed we need to
+        // update the class in the class hierarchy.
+        changedClasses.add(class_);
+      }
     }
+
     orderedClasses = null;
     typeInferenceEngine.finishTopLevelInitializingFormals();
     if (instrumentation != null) {
@@ -754,11 +806,8 @@ class SourceLoader<L> extends Loader<L> {
     // Since finalization of covariance may have added forwarding stubs, we need
     // to recompute the class hierarchy so that method compilation will properly
     // target those forwarding stubs.
-    // TODO(paulberry): could we make this unnecessary by not clearing class
-    // inference info?
-    typeInferenceEngine.classHierarchy = hierarchy = new ClassHierarchy(
-        computeFullComponent(),
-        onAmbiguousSupertypes: ignoreAmbiguousSupertypes);
+    hierarchy.onAmbiguousSupertypes = ignoreAmbiguousSupertypes;
+    hierarchy.applyMemberChanges(changedClasses, findDescendants: true);
     ticker.logMs("Performed top level inference");
   }
 

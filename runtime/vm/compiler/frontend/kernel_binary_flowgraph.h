@@ -327,9 +327,6 @@ class ProcedureHelper {
   bool IsRedirectingFactoryConstructor() {
     return (flags_ & kRedirectingFactoryConstructor) != 0;
   }
-  bool IsNoSuchMethodForwarder() {
-    return (flags_ & kNoSuchMethodForwarder) != 0;
-  }
 
   NameIndex canonical_name_;
   TokenPosition position_;
@@ -434,8 +431,10 @@ class ClassHelper {
   };
 
   enum Flag {
-    kIsAbstract = 1,
-    kIsEnumClass = 2,
+    kIsAbstract = 1 << 2,
+    kIsEnumClass = 1 << 3,
+    kIsAnonymousMixin = 1 << 4,
+    kIsEliminatedMixin = 1 << 5,
   };
 
   explicit ClassHelper(KernelReaderHelper* helper)
@@ -450,9 +449,13 @@ class ClassHelper {
   void SetNext(Field field) { next_read_ = field; }
   void SetJustRead(Field field) { next_read_ = field + 1; }
 
-  bool is_abstract() { return flags_ & Flag::kIsAbstract; }
+  bool is_abstract() const { return flags_ & Flag::kIsAbstract; }
 
-  bool is_enum_class() { return flags_ & Flag::kIsEnumClass; }
+  bool is_enum_class() const { return flags_ & Flag::kIsEnumClass; }
+
+  bool is_transformed_mixin_application() const {
+    return flags_ & Flag::kIsEliminatedMixin;
+  }
 
   NameIndex canonical_name_;
   TokenPosition position_;
@@ -673,7 +676,16 @@ class BytecodeMetadataHelper : public MetadataHelper {
       : MetadataHelper(builder) {}
 
 #if defined(DART_USE_INTERPRETER)
-  void CopyBytecode(const Function& function);
+  void ReadMetadata(const Function& function);
+
+ private:
+  // Returns the index of the last read pool entry.
+  intptr_t ReadPoolEntries(const Function& function,
+                           const Function& inner_function,
+                           const ObjectPool& pool,
+                           intptr_t from_index);
+  RawCode* ReadBytecode(const ObjectPool& pool);
+  void ReadExceptionsTable(const Code& bytecode);
 #endif
 };
 
@@ -700,6 +712,10 @@ class StreamingDartTypeTranslator {
       intptr_t length);
 
   const Type& ReceiverType(const Class& klass);
+
+  void set_active_class(ActiveClass* active_class) {
+    active_class_ = active_class;
+  }
 
  private:
   // Can build a malformed type.
@@ -825,8 +841,14 @@ class StreamingScopeBuilder {
                             const char* prefix,
                             intptr_t nesting_depth);
 
+  void FinalizeExceptionVariable(GrowableArray<LocalVariable*>* variables,
+                                 GrowableArray<LocalVariable*>* raw_variables,
+                                 const String& symbol,
+                                 intptr_t nesting_depth);
+
   void AddTryVariables();
   void AddCatchVariables();
+  void FinalizeCatchVariables();
   void AddIteratorVariable();
   void AddSwitchVariable();
 
@@ -907,12 +929,12 @@ class StreamingConstantEvaluator {
 
   bool IsCached(intptr_t offset);
 
-  Instance& EvaluateExpression(intptr_t offset, bool reset_position = true);
+  RawInstance* EvaluateExpression(intptr_t offset, bool reset_position = true);
   Instance& EvaluateListLiteral(intptr_t offset, bool reset_position = true);
   Instance& EvaluateMapLiteral(intptr_t offset, bool reset_position = true);
   Instance& EvaluateConstructorInvocation(intptr_t offset,
                                           bool reset_position = true);
-  Object& EvaluateExpressionSafe(intptr_t offset);
+  RawObject* EvaluateExpressionSafe(intptr_t offset);
 
  private:
   bool IsAllowedToEvaluate();
@@ -1249,7 +1271,7 @@ class StreamingFlowGraphBuilder : public KernelReaderHelper {
 
   Fragment BuildStatementAt(intptr_t kernel_offset);
   RawObject* BuildParameterDescriptor(intptr_t kernel_offset);
-  RawObject* EvaluateMetadata(intptr_t kernel_offset);
+  RawObject* EvaluateMetadata(intptr_t kernel_offset, const Class& owner_class);
   void CollectTokenPositionsFor(
       intptr_t script_index,
       intptr_t initial_script_index,
@@ -1392,6 +1414,10 @@ class StreamingFlowGraphBuilder : public KernelReaderHelper {
     kTypeChecksForNoDynamicInvocationsTearOff
   };
 
+  // Does not move the cursor.
+  Fragment BuildDefaultTypeHandling(const Function& function,
+                                    intptr_t type_parameters_offset);
+
   Fragment BuildArgumentTypeChecks(TypeChecksToBuild mode = kDefaultTypeChecks);
 
   Fragment ThrowException(TokenPosition position);
@@ -1439,6 +1465,7 @@ class StreamingFlowGraphBuilder : public KernelReaderHelper {
   // Drop given number of temps from the stack but preserve top of the stack.
   Fragment DropTempsPreserveTop(intptr_t num_temps_to_drop);
 
+  Fragment MakeTemp();
   Fragment NullConstant();
   JoinEntryInstr* BuildJoinEntry();
   JoinEntryInstr* BuildJoinEntry(intptr_t try_index);

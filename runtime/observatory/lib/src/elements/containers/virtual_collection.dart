@@ -151,7 +151,7 @@ class VirtualCollectionElement extends HtmlElement implements Renderable {
         final rect = _header.getBoundingClientRect();
         _header.classes.add('attached');
         _viewport.style.top = '${rect.height}px';
-        final width = _header.children.fold(0, _foldWidth);
+        final width = _header.children.fold(0.0, _foldWidth);
         _buffer.style.minWidth = '${width}px';
       }
       _itemHeight = _buffer.children[0].getBoundingClientRect().height;
@@ -246,7 +246,7 @@ class VirtualCollectionElement extends HtmlElement implements Renderable {
     }
   }
 
-  Iterable<dynamic> _doSearch(String search) {
+  Iterable<dynamic> _doSearch(Pattern search) {
     return _items.where((item) => _search(search, item));
   }
 }

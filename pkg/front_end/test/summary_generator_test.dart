@@ -14,9 +14,9 @@ main() {
     var summary = await summarize(['a.dart'], allSources);
     var component = loadComponentFromBytes(summary);
 
-    // Note: the kernel representation always has an empty '' key in the map,
+    // Note: the kernel representation always has a null key in the map,
     // but otherwise no other data is included here.
-    expect(component.uriToSource.keys.single, Uri.parse(""));
+    expect(component.uriToSource.keys.single, null);
   });
 
   test('summary includes declarations, but no method bodies', () async {
@@ -118,14 +118,10 @@ main() {
         component.libraries.single.importUri.path.endsWith('b.dart'), isTrue);
   });
 
-  test('summarization by default is hermetic', () async {
+  test('summarization by default is not hermetic', () async {
     var errors = [];
     var options = new CompilerOptions()..onError = (e) => errors.add(e);
     await summarize(['b.dart'], allSources, options: options);
-    expect(errors.first.toString(), contains('Invalid access'));
-    errors.clear();
-
-    await summarize(['a.dart', 'b.dart'], allSources, options: options);
     expect(errors, isEmpty);
   });
 

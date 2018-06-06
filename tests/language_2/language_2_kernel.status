@@ -10,6 +10,175 @@
 # missing a section you need, please reach out to sigmund@ to see the best way
 # to add them.
 
+[ $compiler == app_jitk ]
+assertion_initializer_const_error2_test/cc01: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc02: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc03: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc04: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc05: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc06: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc07: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc08: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc09: MissingCompileTimeError
+assertion_initializer_const_error2_test/cc10: MissingCompileTimeError
+async_star_cancel_while_paused_test: RuntimeError
+async_star_pause_test: RuntimeError
+async_star_test/02: RuntimeError
+call_method_implicit_tear_off_implements_function_test/05: RuntimeError
+call_method_implicit_tear_off_implements_function_test/06: RuntimeError
+call_method_must_not_be_field_test/03: RuntimeError
+call_method_must_not_be_getter_test/03: RuntimeError
+compile_time_constant_static5_test/11: CompileTimeError
+compile_time_constant_static5_test/16: CompileTimeError
+compile_time_constant_static5_test/21: CompileTimeError
+compile_time_constant_static5_test/23: CompileTimeError
+conditional_import_string_test: CompileTimeError
+conditional_import_test: CompileTimeError
+conditional_rewrite_test: RuntimeError
+config_import_corelib_test: CompileTimeError
+config_import_test: RuntimeError
+const_list_test: RuntimeError
+const_locals_test: RuntimeError
+const_map4_test: RuntimeError
+const_nested_test: RuntimeError
+const_string_test: RuntimeError
+constructor12_test: RuntimeError
+covariant_subtyping_test: RuntimeError
+ct_const_test: RuntimeError
+cyclic_type2_test: CompileTimeError
+cyclic_type_test/02: CompileTimeError
+cyclic_type_test/04: CompileTimeError
+cyclic_typedef_test/10: DartkCrash
+cyclic_typedef_test/11: DartkCrash
+deferred_call_empty_before_load_test: RuntimeError
+deferred_load_constants_test/none: RuntimeError
+deferred_not_loaded_check_test: RuntimeError
+deferred_redirecting_factory_test: RuntimeError
+deferred_static_seperate_test: RuntimeError
+dynamic_prefix_core_test/none: CompileTimeError
+emit_const_fields_test: CompileTimeError
+example_constructor_test: RuntimeError
+export_ambiguous_main_test: Crash
+external_test/10: MissingRuntimeError
+external_test/13: MissingRuntimeError
+external_test/20: MissingRuntimeError
+field_initialization_order_test/01: MissingCompileTimeError
+field_initialization_order_test/none: RuntimeError
+flatten_test/05: MissingRuntimeError
+flatten_test/08: MissingRuntimeError
+flatten_test/09: MissingRuntimeError
+flatten_test/12: MissingRuntimeError
+function_propagation_test: RuntimeError
+function_subtype_inline2_test: RuntimeError
+generic_function_bounds_test: RuntimeError
+generic_function_dcall_test: RuntimeError
+generic_instanceof2_test: RuntimeError
+generic_is_check_test: RuntimeError
+generic_no_such_method_dispatcher_simple_test: CompileTimeError
+generic_no_such_method_dispatcher_test: CompileTimeError
+generic_tearoff_test: CompileTimeError
+generic_test/01: MissingCompileTimeError
+instantiate_tearoff_of_call_test: CompileTimeError
+issue31596_super_test/01: CompileTimeError
+issue31596_super_test/03: CompileTimeError
+issue31596_super_test/05: RuntimeError
+least_upper_bound_expansive_test/none: CompileTimeError
+library_env_test/has_html_support: RuntimeError
+library_env_test/has_no_io_support: RuntimeError
+library_env_test/has_no_mirror_support: RuntimeError
+local_function2_test/none: RuntimeError
+local_function3_test/none: RuntimeError
+local_function_test/none: RuntimeError
+main_test/03: RuntimeError
+method_override_test: CompileTimeError
+mixin_illegal_super_use_test/01: MissingCompileTimeError
+mixin_illegal_super_use_test/04: MissingCompileTimeError
+mixin_illegal_super_use_test/07: MissingCompileTimeError
+mixin_illegal_super_use_test/10: MissingCompileTimeError
+mixin_illegal_super_use_test/11: MissingCompileTimeError
+mixin_illegal_superclass_test/01: MissingCompileTimeError
+mixin_illegal_superclass_test/02: MissingCompileTimeError
+mixin_illegal_superclass_test/03: MissingCompileTimeError
+mixin_illegal_superclass_test/04: MissingCompileTimeError
+mixin_illegal_superclass_test/05: MissingCompileTimeError
+mixin_illegal_superclass_test/06: MissingCompileTimeError
+mixin_illegal_superclass_test/07: MissingCompileTimeError
+mixin_illegal_superclass_test/08: MissingCompileTimeError
+mixin_illegal_superclass_test/09: MissingCompileTimeError
+mixin_illegal_superclass_test/10: MissingCompileTimeError
+mixin_illegal_superclass_test/11: MissingCompileTimeError
+mixin_illegal_superclass_test/12: MissingCompileTimeError
+mixin_illegal_superclass_test/13: MissingCompileTimeError
+mixin_illegal_superclass_test/14: MissingCompileTimeError
+mixin_illegal_superclass_test/15: MissingCompileTimeError
+mixin_illegal_superclass_test/16: MissingCompileTimeError
+mixin_illegal_superclass_test/17: MissingCompileTimeError
+mixin_illegal_superclass_test/18: MissingCompileTimeError
+mixin_illegal_superclass_test/19: MissingCompileTimeError
+mixin_illegal_superclass_test/20: MissingCompileTimeError
+mixin_illegal_superclass_test/21: MissingCompileTimeError
+mixin_illegal_superclass_test/22: MissingCompileTimeError
+mixin_illegal_superclass_test/23: MissingCompileTimeError
+mixin_illegal_superclass_test/24: MissingCompileTimeError
+mixin_illegal_superclass_test/25: MissingCompileTimeError
+mixin_illegal_superclass_test/26: MissingCompileTimeError
+mixin_illegal_superclass_test/27: MissingCompileTimeError
+mixin_illegal_superclass_test/28: MissingCompileTimeError
+mixin_illegal_superclass_test/29: MissingCompileTimeError
+mixin_illegal_superclass_test/30: MissingCompileTimeError
+mock_writable_final_private_field_test: RuntimeError
+named_parameters_default_eq_test/none: RuntimeError
+nested_generic_closure_test: RuntimeError
+no_main_test/01: Crash
+no_such_method_mock_test: RuntimeError
+null_no_such_method_test: CompileTimeError
+override_inheritance_field_test/04: CompileTimeError
+override_inheritance_field_test/06: CompileTimeError
+override_inheritance_field_test/26: CompileTimeError
+override_inheritance_field_test/29: CompileTimeError
+override_inheritance_generic_test/02: CompileTimeError
+override_inheritance_method_test/28: CompileTimeError
+override_inheritance_method_test/29: CompileTimeError
+parser_quirks_test: CompileTimeError
+regress_22443_test: RuntimeError
+regress_23089_test: DartkCrash
+regress_23408_test: CompileTimeError
+regress_29025_test: CompileTimeError
+regress_29405_test: CompileTimeError
+regress_30339_test: CompileTimeError
+string_interpolate_test: CompileTimeError
+string_interpolation_and_buffer_test: RuntimeError
+string_split_test: CompileTimeError
+string_supertype_checked_test: CompileTimeError
+super_bound_closure_test/none: CompileTimeError
+super_no_such_method1_test: CompileTimeError
+super_no_such_method2_test: CompileTimeError
+super_no_such_method3_test: CompileTimeError
+super_no_such_method4_test: CompileTimeError
+super_no_such_method5_test: CompileTimeError
+super_operator_index5_test: CompileTimeError
+super_operator_index6_test: CompileTimeError
+super_operator_index7_test: CompileTimeError
+super_operator_index8_test: CompileTimeError
+super_test: RuntimeError
+type_alias_equality_test/02: RuntimeError
+type_alias_equality_test/03: RuntimeError
+type_alias_equality_test/04: RuntimeError
+type_error_test: RuntimeError
+type_literal_test: RuntimeError
+type_promotion_functions_test/02: CompileTimeError
+type_promotion_functions_test/03: CompileTimeError
+type_promotion_functions_test/04: CompileTimeError
+type_promotion_functions_test/09: CompileTimeError
+type_promotion_functions_test/11: CompileTimeError
+type_promotion_functions_test/12: CompileTimeError
+type_promotion_functions_test/13: CompileTimeError
+type_promotion_functions_test/14: CompileTimeError
+type_promotion_functions_test/none: CompileTimeError
+type_promotion_more_specific_test/04: CompileTimeError
+vm/optimized_guarded_field_isolates_test: RuntimeError
+vm/type_cast_vm_test: RuntimeError
+
 [ $compiler == dartkp ]
 class_cycle_test/02: MissingCompileTimeError
 class_cycle_test/03: MissingCompileTimeError
@@ -65,63 +234,64 @@ async_return_types_test/nestedFuture: MissingCompileTimeError # Issue 33068
 async_return_types_test/wrongReturnType: MissingCompileTimeError # Issue 33068
 bad_override_test/01: MissingCompileTimeError # Issue 32984
 bad_override_test/02: MissingCompileTimeError # Issue 32984
-call_non_method_field_test/01: MissingCompileTimeError
-call_non_method_field_test/02: MissingCompileTimeError
-check_member_static_test/01: MissingCompileTimeError
-const_cast2_test/01: CompileTimeError
-const_cast2_test/none: CompileTimeError
+call_non_method_field_test/01: MissingCompileTimeError # Issue 32975
+call_non_method_field_test/02: MissingCompileTimeError # Issue 32975
+check_member_static_test/01: MissingCompileTimeError # Issue 32613
+const_cast2_test/01: CompileTimeError # Issue 32517
+const_cast2_test/none: CompileTimeError # Issue 32517
 const_instance_field_test/01: MissingCompileTimeError # Fasta bug: Const instance field. Issue 32326.
 const_map2_test/00: MissingCompileTimeError # KernelVM bug: Constant evaluation.
 const_map3_test/00: MissingCompileTimeError # KernelVM bug: Constant evaluation.
 const_switch2_test/01: MissingCompileTimeError # KernelVM bug: Constant evaluation.
-const_types_test/34: MissingCompileTimeError
-const_types_test/39: MissingCompileTimeError
-constructor_redirect1_negative_test/01: MissingCompileTimeError
-constructor_redirect2_negative_test: MissingCompileTimeError
+const_types_test/34: MissingCompileTimeError # Issue 32988
+const_types_test/39: MissingCompileTimeError # Issue 32988
+constructor_redirect1_negative_test/01: MissingCompileTimeError # Issue 30856
+constructor_redirect2_negative_test: MissingCompileTimeError # Issue 30856
 constructor_redirect_test/01: MissingCompileTimeError # Fasta bug: Initializer refers to this.
-cyclic_constructor_test/01: MissingCompileTimeError # Fasta bug: Cyclic constructor redirection.
+cyclic_constructor_test/01: MissingCompileTimeError # Issue 30856 (cyclic constructor redirection)
 cyclic_type_variable_test/01: MissingCompileTimeError # Issue 32989 (missing cycle check in bounds)
 cyclic_type_variable_test/02: MissingCompileTimeError # Issue 32989 (missing cycle check in bounds)
 cyclic_type_variable_test/03: MissingCompileTimeError # Issue 32989 (missing cycle check in bounds)
 cyclic_type_variable_test/04: MissingCompileTimeError # Issue 32989 (missing cycle check in bounds)
-default_factory2_test/01: MissingCompileTimeError
-default_factory_test/01: MissingCompileTimeError
+default_factory2_test/01: MissingCompileTimeError # Issue 32988
+default_factory_test/01: MissingCompileTimeError # Issue 32988
 deferred_inheritance_constraints_test/extends: MissingCompileTimeError # Fasta/KernelVM bug: Deferred loading kernel issue 30273.
 deferred_inheritance_constraints_test/implements: MissingCompileTimeError # Fasta/KernelVM bug: Deferred loading kernel issue 30273.
 deferred_inheritance_constraints_test/mixin: MissingCompileTimeError # Fasta/KernelVM bug: Deferred loading kernel issue 30273.
 deferred_inheritance_constraints_test/redirecting_constructor: MissingCompileTimeError # Fasta/KernelVM bug: Deferred loading kernel issue 30273.
-duplicate_export_negative_test: Fail # Issue 6134
-f_bounded_quantification_test/01: MissingCompileTimeError
-f_bounded_quantification_test/02: MissingCompileTimeError
-factory4_test/00: MissingCompileTimeError
-field3_test/01: MissingCompileTimeError
-field_override_test/00: MissingCompileTimeError
-field_override_test/01: MissingCompileTimeError
-generic_methods_bounds_test/01: MissingCompileTimeError
-generic_methods_overriding_test/01: MissingCompileTimeError
-generic_methods_recursive_bound_test/02: MissingCompileTimeError
-getter_override_test/03: MissingCompileTimeError
+duplicate_export_negative_test: Fail # Issue 12916
+f_bounded_quantification_test/01: MissingCompileTimeError # Issue 33018
+f_bounded_quantification_test/02: MissingCompileTimeError # Issue 33018
+factory4_test/00: MissingCompileTimeError # Issue 32988
+field3_test/01: MissingCompileTimeError # Issue 33022
+field3_test/02: MissingCompileTimeError # Issue 33022
+field_override_test/00: MissingCompileTimeError # Issue 32613
+field_override_test/01: MissingCompileTimeError # Issue 32613
+generic_methods_bounds_test/01: MissingCompileTimeError # Issue 33018
+generic_methods_overriding_test/01: MissingCompileTimeError # Issue 32613
+generic_methods_recursive_bound_test/02: MissingCompileTimeError # Issue 33018
+getter_override_test/03: MissingCompileTimeError # Issue 32984
 issue31596_override_test/07: MissingCompileTimeError
 issue31596_override_test/08: MissingCompileTimeError
 issue31596_super_test/02: MissingCompileTimeError
 issue31596_super_test/04: MissingCompileTimeError
-malbounded_instantiation_test/01: MissingCompileTimeError
-malbounded_instantiation_test/02: MissingCompileTimeError
-malbounded_instantiation_test/03: MissingCompileTimeError
-malbounded_redirecting_factory_test/02: MissingCompileTimeError
-malbounded_redirecting_factory_test/03: MissingCompileTimeError
-malbounded_redirecting_factory_test/04: MissingCompileTimeError
-malbounded_redirecting_factory_test/05: MissingCompileTimeError
-malbounded_type_cast2_test: MissingCompileTimeError
-malbounded_type_cast_test/00: MissingCompileTimeError
-malbounded_type_cast_test/01: MissingCompileTimeError
-malbounded_type_cast_test/02: MissingCompileTimeError
-malbounded_type_literal_test/00: MissingCompileTimeError
-malbounded_type_test2_test/00: MissingCompileTimeError
-malbounded_type_test_test/00: MissingCompileTimeError
-malbounded_type_test_test/01: MissingCompileTimeError
-malbounded_type_test_test/02: MissingCompileTimeError
-method_override7_test/03: MissingCompileTimeError
+malbounded_instantiation_test/01: MissingCompileTimeError # Issue 33018
+malbounded_instantiation_test/02: MissingCompileTimeError # Issue 33018
+malbounded_instantiation_test/03: MissingCompileTimeError # Issue 33018
+malbounded_redirecting_factory_test/02: MissingCompileTimeError # Issue 33018
+malbounded_redirecting_factory_test/03: MissingCompileTimeError # Issue 33018
+malbounded_redirecting_factory_test/04: MissingCompileTimeError # Issue 33018
+malbounded_redirecting_factory_test/05: MissingCompileTimeError # Issue 33018
+malbounded_type_cast2_test: MissingCompileTimeError # Issue 33018
+malbounded_type_cast_test/00: MissingCompileTimeError # Issue 33018
+malbounded_type_cast_test/01: MissingCompileTimeError # Issue 33018
+malbounded_type_cast_test/02: MissingCompileTimeError # Issue 33018
+malbounded_type_literal_test/00: MissingCompileTimeError # Issue 33018
+malbounded_type_test2_test/00: MissingCompileTimeError # Issue 33018
+malbounded_type_test_test/00: MissingCompileTimeError # Issue 33018
+malbounded_type_test_test/01: MissingCompileTimeError # Issue 33018
+malbounded_type_test_test/02: MissingCompileTimeError # Issue 33018
+method_override7_test/03: MissingCompileTimeError # Issue 32984
 mixin_forwarding_constructor4_test/01: MissingCompileTimeError # KernelVM bug: Issue 15101
 mixin_forwarding_constructor4_test/02: MissingCompileTimeError # KernelVM bug: Issue 15101
 mixin_forwarding_constructor4_test/03: MissingCompileTimeError # KernelVM bug: Issue 15101
@@ -432,13 +602,18 @@ void_type_usage_test/paren_toString: MissingCompileTimeError # Issue 32804
 void_type_usage_test/paren_void_init: MissingCompileTimeError # Issue 32804
 void_type_usage_test/paren_while: MissingCompileTimeError # Issue 32804
 
-[ $arch == simarm && $compiler == dartkp && $strong ]
-await_test: RuntimeError
+[ $arch != simarm && $arch != simarm64 && $arch != simdbc64 && $compiler == dartk && $runtime == vm && $strong ]
+export_ambiguous_main_test: Crash # Issue 32618
 
-[ $arch != simarm && $arch != simarm64 && $arch != simdbc64 && $compiler == dartk ]
-export_ambiguous_main_test: MissingCompileTimeError
+[ $compiler == app_jitk && $mode == product ]
+type_variable_promotion_test: RuntimeError
+vm/causal_async_exception_stack2_test: RuntimeError
+vm/causal_async_exception_stack_test: RuntimeError
 
-[ $compiler != dart2js && $compiler != dartk && $compiler != dartkp && $fasta ]
+[ $compiler == app_jitk && ($mode == debug || $mode == release) ]
+assertion_test: RuntimeError
+
+[ $compiler != app_jitk && $compiler != dart2js && $compiler != dartk && $compiler != dartkp && $fasta ]
 const_optional_args_test/01: MissingCompileTimeError
 
 # The precomilation configuration uses a kernel2kernel constants evaluator
@@ -455,9 +630,15 @@ mixin_super_2_test/03: MissingCompileTimeError
 mixin_supertype_subclass_test/02: MissingCompileTimeError
 mixin_supertype_subclass_test/05: MissingCompileTimeError
 
-[ $compiler == dartk && $mode == debug && $runtime == vm && $strong ]
-const_instance_field_test/01: Crash # Issue 32326.
-deopt_inlined_function_lazy_test: Skip
+[ $compiler == dartk && $mode == debug && $hot_reload ]
+async_star_test/01: Crash
+async_star_test/05: Crash
+
+[ $compiler == dartk && $mode == debug && $hot_reload_rollback ]
+enum_test: Crash
+
+[ $compiler == dartk && $mode == debug && ($hot_reload || $hot_reload_rollback) ]
+enum_duplicate_test/01: Crash
 
 [ $compiler == dartk && $mode == product && $runtime == vm ]
 deferred_load_constants_test/02: Fail
@@ -527,8 +708,6 @@ regress_30339_test: RuntimeError
 type_variable_bounds4_test/01: RuntimeError
 
 [ $compiler == dartk && $runtime == vm && !$checked && $strong ]
-compile_time_constant_static2_test/04: MissingCompileTimeError
-compile_time_constant_static3_test/04: MissingCompileTimeError
 conditional_rewrite_test: RuntimeError # Issue 31402 (Not)
 type_error_test: RuntimeError # Issue 31402 (Variable declaration)
 
@@ -600,8 +779,6 @@ generic_no_such_method_dispatcher_test: CompileTimeError # Issue 31533
 generic_tearoff_test: CompileTimeError
 generic_tearoff_test: RuntimeError
 if_null_evaluation_order_test: Pass
-initializing_formal_type_annotation_test/01: MissingCompileTimeError
-initializing_formal_type_annotation_test/02: MissingCompileTimeError
 instantiate_tearoff_of_call_test: CompileTimeError
 issue18628_2_test/01: MissingCompileTimeError
 issue31596_super_test/01: CompileTimeError
@@ -696,6 +873,10 @@ wrong_number_type_arguments_test/none: Pass
 [ $compiler == dartk && $system == windows && $strong ]
 ct_const2_test: Fail
 
+[ $compiler == dartk && $hot_reload ]
+vm/causal_async_exception_stack2_test: Crash
+vm/causal_async_exception_stack_test: Crash
+
 [ $compiler == dartk && $strong ]
 assertion_initializer_const_error2_test/cc01: MissingCompileTimeError # Not reporting failed assert() at compile time.
 assertion_initializer_const_error2_test/cc02: MissingCompileTimeError # Not reporting failed assert() at compile time.
@@ -716,6 +897,14 @@ redirecting_factory_reflection_test: RuntimeError
 # batch mode.
 [ $compiler == dartk && $strong && ($arch == simarm || $arch == simarm64 || $arch == simdbc64) ]
 least_upper_bound_expansive_test/none: RuntimeError # Please triage.
+
+[ $compiler == dartk && ($hot_reload || $hot_reload_rollback) ]
+async_star_test/01: Skip # Timeout
+async_star_test/02: Skip # Timeout
+async_star_test/03: Skip # Timeout
+async_star_test/04: Skip # Timeout
+async_star_test/05: Skip # Timeout
+async_star_test/none: Skip # Timeout
 
 [ $compiler == dartkp && $mode == debug && $runtime == dart_precompiled && $strong ]
 const_instance_field_test/01: Crash # Issue 32326.
@@ -812,8 +1001,6 @@ type_variable_bounds4_test/01: RuntimeError
 [ $compiler == dartkp && $runtime == dart_precompiled && !$checked && $strong ]
 assertion_initializer_const_error_test/01: MissingCompileTimeError
 assertion_initializer_const_function_error_test/01: MissingCompileTimeError
-compile_time_constant_static2_test/04: MissingCompileTimeError
-compile_time_constant_static3_test/04: MissingCompileTimeError
 conditional_rewrite_test: RuntimeError # Issue 31402 (Not)
 implicit_downcast_during_combiner_test: RuntimeError
 implicit_downcast_during_compound_assignment_test: RuntimeError
@@ -943,8 +1130,6 @@ implicit_downcast_during_variable_declaration_test: Pass # Correctly passes.
 implicit_downcast_during_while_statement_test: Pass # Correctly passes.
 implicit_downcast_during_yield_star_test: Pass # Correctly passes.
 implicit_downcast_during_yield_test: Pass # Correctly passes.
-initializing_formal_type_annotation_test/01: MissingCompileTimeError
-initializing_formal_type_annotation_test/02: MissingCompileTimeError
 instance_creation_in_function_annotation_test: SkipByDesign
 instantiate_tearoff_of_call_test: CompileTimeError
 invocation_mirror2_test: SkipByDesign
@@ -1096,13 +1281,13 @@ type_variable_promotion_test: RuntimeError # Compares runtime type to the string
 # which is is more correct than fasta/vm in JIT mode (i.e. it catches more
 # compile-time errors).
 [ $compiler != dartkp && $fasta ]
-compile_time_constant_o_test/01: MissingCompileTimeError
-compile_time_constant_o_test/02: MissingCompileTimeError
-const_dynamic_type_literal_test/02: MissingCompileTimeError
-identical_const_test/01: MissingCompileTimeError
-identical_const_test/02: MissingCompileTimeError
-identical_const_test/03: MissingCompileTimeError
-identical_const_test/04: MissingCompileTimeError
+compile_time_constant_o_test/01: MissingCompileTimeError # Issue 32983
+compile_time_constant_o_test/02: MissingCompileTimeError # Issue 32983
+const_dynamic_type_literal_test/02: MissingCompileTimeError # Issue 32983
+identical_const_test/01: MissingCompileTimeError # Issue 32983
+identical_const_test/02: MissingCompileTimeError # Issue 32983
+identical_const_test/03: MissingCompileTimeError # Issue 32983
+identical_const_test/04: MissingCompileTimeError # Issue 32983
 
 # The precomilation configuration uses a kernel2kernel constants evaluator
 # which is is more correct than fasta/vm in JIT mode (i.e. it catches more
@@ -1306,11 +1491,11 @@ prefix_transitive_import_test/02: MissingCompileTimeError
 setter_override2_test/02: MissingCompileTimeError
 variable_shadow_class_test/01: MissingCompileTimeError
 
+[ $mode == debug && $runtime == vm && $strong && ($compiler == app_jitk || $compiler == dartk) ]
+const_instance_field_test/01: Crash # Issue 32326.
+deopt_inlined_function_lazy_test: Skip
+
 [ $fasta && $strong ]
-compile_time_constant_static2_test/04: MissingCompileTimeError
-compile_time_constant_static3_test/04: MissingCompileTimeError
-initializing_formal_type_annotation_test/01: MissingCompileTimeError
-initializing_formal_type_annotation_test/02: MissingCompileTimeError
 issue18628_2_test/01: MissingCompileTimeError
 map_literal3_test/03: MissingCompileTimeError
 redirecting_factory_infinite_steps_test/01: MissingCompileTimeError
@@ -1361,7 +1546,7 @@ bad_named_parameters_test/04: MissingCompileTimeError
 bad_named_parameters_test/05: MissingCompileTimeError
 bad_override_test/03: MissingCompileTimeError
 bad_override_test/06: MissingCompileTimeError
-built_in_identifier_type_annotation_test/22: MissingCompileTimeError
+built_in_identifier_type_annotation_test/dynamic-gen: MissingCompileTimeError
 call_constructor_on_unresolvable_class_test/01: MissingCompileTimeError
 call_constructor_on_unresolvable_class_test/02: MissingCompileTimeError
 call_constructor_on_unresolvable_class_test/03: MissingCompileTimeError

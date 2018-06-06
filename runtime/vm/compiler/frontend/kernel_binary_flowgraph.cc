@@ -679,7 +679,7 @@ void MetadataHelper::SetMetadataMappings(intptr_t mappings_offset,
       intptr_t node_offset = reader.ReadUInt32();
       intptr_t md_offset = reader.ReadUInt32();
 
-      ASSERT((node_offset > 0) && (md_offset > 0));
+      ASSERT((node_offset > 0) && (md_offset >= 0));
       ASSERT(node_offset > prev_node_offset);
       prev_node_offset = node_offset;
     }
@@ -747,7 +747,7 @@ intptr_t MetadataHelper::GetNextMetadataPayloadOffset(intptr_t node_offset) {
 
   intptr_t index = last_mapping_index_;
   intptr_t mapping_node_offset = 0;
-  intptr_t mapping_md_offset = 0;
+  intptr_t mapping_md_offset = -1;
 
   Reader reader(H.metadata_mappings());
   const intptr_t kUInt32Size = 4;
@@ -766,7 +766,7 @@ intptr_t MetadataHelper::GetNextMetadataPayloadOffset(intptr_t node_offset) {
   last_node_offset_ = node_offset;
 
   if ((index < mappings_num_) && (mapping_node_offset == node_offset)) {
-    ASSERT(mapping_md_offset > 0);
+    ASSERT(mapping_md_offset >= 0);
     return mapping_md_offset;
   } else {
     return -1;
@@ -782,7 +782,7 @@ bool DirectCallMetadataHelper::ReadMetadata(intptr_t node_offset,
   }
 
   AlternativeReadingScope alt(&builder_->reader_, &H.metadata_payloads(),
-                              md_offset - MetadataPayloadOffset);
+                              md_offset);
 
   *target_name = builder_->ReadCanonicalNameReference();
   *check_receiver_for_null = builder_->ReadBool();
@@ -860,7 +860,7 @@ bool ProcedureAttributesMetadataHelper::ReadMetadata(
   }
 
   AlternativeReadingScope alt(&builder_->reader_, &H.metadata_payloads(),
-                              md_offset - MetadataPayloadOffset);
+                              md_offset);
 
   const int kDynamicUsesBit = 1 << 0;
   const int kNonThisUsesBit = 1 << 1;
@@ -890,7 +890,7 @@ InferredTypeMetadata InferredTypeMetadataHelper::GetInferredType(
   }
 
   AlternativeReadingScope alt(&builder_->reader_, &H.metadata_payloads(),
-                              md_offset - MetadataPayloadOffset);
+                              md_offset);
 
   const NameIndex kernel_name = builder_->ReadCanonicalNameReference();
   const bool nullable = builder_->ReadBool();
@@ -914,8 +914,7 @@ InferredTypeMetadata InferredTypeMetadataHelper::GetInferredType(
 }
 
 #if defined(DART_USE_INTERPRETER)
-void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
-  // TODO(regis): Avoid copying bytecode from mapped kernel binary.
+void BytecodeMetadataHelper::ReadMetadata(const Function& function) {
   const intptr_t node_offset = function.kernel_offset();
   const intptr_t md_offset = GetNextMetadataPayloadOffset(node_offset);
   if (md_offset < 0) {
@@ -923,16 +922,53 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
   }
 
   AlternativeReadingScope alt(&builder_->reader_, &H.metadata_payloads(),
-                              md_offset - MetadataPayloadOffset);
+                              md_offset);
 
-  // Read bytecode.
-  intptr_t bytecode_size = builder_->reader_.ReadUInt();
-  intptr_t bytecode_offset = builder_->reader_.offset();
-  uint8_t* bytecode_data = builder_->reader_.CopyDataIntoZone(
-      builder_->zone_, bytecode_offset, bytecode_size);
+  // Create object pool and read pool entries.
+  const intptr_t obj_count = builder_->reader_.ReadListLength();
+  const ObjectPool& pool =
+      ObjectPool::Handle(builder_->zone_, ObjectPool::New(obj_count));
+  ReadPoolEntries(function, function, pool, 0);
 
-  // This enum and the code below reading the constant pool from kernel must be
-  // kept in sync with pkg/vm/lib/bytecode/constant_pool.dart.
+  // Read bytecode and attach to function.
+  const Code& bytecode = Code::Handle(builder_->zone_, ReadBytecode(pool));
+  function.AttachBytecode(bytecode);
+
+  // Read exceptions table.
+  ReadExceptionsTable(bytecode);
+
+  if (FLAG_dump_kernel_bytecode) {
+    KernelBytecodeDisassembler::Disassemble(function);
+  }
+
+  // Read closures.
+  Function& closure = Function::Handle(builder_->zone_);
+  Code& closure_bytecode = Code::Handle(builder_->zone_);
+  intptr_t num_closures = builder_->ReadListLength();
+  for (intptr_t i = 0; i < num_closures; i++) {
+    intptr_t closure_index = builder_->ReadUInt();
+    ASSERT(closure_index < obj_count);
+    closure ^= pool.ObjectAt(closure_index);
+
+    // Read closure bytecode and attach to closure function.
+    closure_bytecode = ReadBytecode(pool);
+    closure.AttachBytecode(closure_bytecode);
+
+    // Read closure exceptions table.
+    ReadExceptionsTable(closure_bytecode);
+
+    if (FLAG_dump_kernel_bytecode) {
+      KernelBytecodeDisassembler::Disassemble(closure);
+    }
+  }
+}
+
+intptr_t BytecodeMetadataHelper::ReadPoolEntries(const Function& function,
+                                                 const Function& inner_function,
+                                                 const ObjectPool& pool,
+                                                 intptr_t from_index) {
+  // These enums and the code below reading the constant pool from kernel must
+  // be kept in sync with pkg/vm/lib/bytecode/constant_pool.dart.
   enum ConstantPoolTag {
     kInvalid,
     kNull,
@@ -954,19 +990,25 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
     kInstance,
     kSymbol,
     kTypeArgumentsForInstanceAllocation,
+    kContextOffset,
+    kClosureFunction,
+    kEndClosureFunctionScope,
   };
 
-  // Read object pool.
-  builder_->reader_.set_offset(bytecode_offset + bytecode_size);
-  intptr_t obj_count = builder_->reader_.ReadListLength();
-  const ObjectPool& obj_pool =
-      ObjectPool::Handle(builder_->zone_, ObjectPool::New(obj_count));
+  enum InvocationKind {
+    method,  // x.foo(...) or foo(...)
+    getter,  // x.foo
+    setter   // x.foo = ...
+  };
+
   Object& obj = Object::Handle(builder_->zone_);
   Object& elem = Object::Handle(builder_->zone_);
   Array& array = Array::Handle(builder_->zone_);
   Field& field = Field::Handle(builder_->zone_);
+  Class& cls = Class::Handle(builder_->zone_);
   String& name = String::Handle(builder_->zone_);
-  for (intptr_t i = 0; i < obj_count; ++i) {
+  const intptr_t obj_count = pool.Length();
+  for (intptr_t i = from_index; i < obj_count; ++i) {
     const intptr_t tag = builder_->ReadTag();
     switch (tag) {
       case ConstantPoolTag::kInvalid:
@@ -1014,11 +1056,11 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
         }
       } break;
       case ConstantPoolTag::kICData: {
-        NameIndex target = builder_->ReadCanonicalNameReference();
-        name = H.DartProcedureName(target).raw();
+        StringIndex target = builder_->ReadStringReference();
+        name = H.DartSymbolPlain(target).raw();
         intptr_t arg_desc_index = builder_->ReadUInt();
         ASSERT(arg_desc_index < i);
-        array ^= obj_pool.ObjectAt(arg_desc_index);
+        array ^= pool.ObjectAt(arg_desc_index);
         // TODO(regis): Should num_args_tested be explicitly provided?
         obj = ICData::New(function, name,
                           array,  // Arguments descriptor.
@@ -1029,18 +1071,34 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
 #endif
       } break;
       case ConstantPoolTag::kStaticICData: {
+        InvocationKind kind = static_cast<InvocationKind>(builder_->ReadByte());
         NameIndex target = builder_->ReadCanonicalNameReference();
         if (H.IsConstructor(target)) {
           name = H.DartConstructorName(target).raw();
           elem = H.LookupConstructorByKernelConstructor(target);
+        } else if (H.IsField(target)) {
+          if (kind == InvocationKind::getter) {
+            name = H.DartGetterName(target).raw();
+          } else if (kind == InvocationKind::setter) {
+            name = H.DartSetterName(target).raw();
+          } else {
+            ASSERT(kind == InvocationKind::method);
+            UNIMPLEMENTED();  // TODO(regis): Revisit.
+          }
+          field = H.LookupFieldByKernelField(target);
+          cls = field.Owner();
+          elem = cls.LookupStaticFunction(name);
         } else {
+          if ((kind == InvocationKind::method) && H.IsGetter(target)) {
+            UNIMPLEMENTED();  // TODO(regis): Revisit.
+          }
           name = H.DartProcedureName(target).raw();
           elem = H.LookupStaticMethodByKernelProcedure(target);
         }
         ASSERT(elem.IsFunction());
         intptr_t arg_desc_index = builder_->ReadUInt();
         ASSERT(arg_desc_index < i);
-        array ^= obj_pool.ObjectAt(arg_desc_index);
+        array ^= pool.ObjectAt(arg_desc_index);
         obj = ICData::New(function, name,
                           array,  // Arguments descriptor.
                           Thread::kNoDeoptId, 0 /* num_args_tested */,
@@ -1067,11 +1125,9 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
         ASSERT(obj.IsClass());
         break;
       case ConstantPoolTag::kTypeArgumentsFieldOffset:
-        obj =
+        cls =
             H.LookupClassByKernelClass(builder_->ReadCanonicalNameReference());
-        ASSERT(obj.IsClass());
-        obj = Smi::New(Class::Cast(obj).type_arguments_field_offset() /
-                       kWordSize);
+        obj = Smi::New(cls.type_arguments_field_offset() / kWordSize);
         break;
       case ConstantPoolTag::kTearOff:
         obj = H.LookupStaticMethodByKernelProcedure(
@@ -1084,12 +1140,10 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
         obj = H.Canonicalize(Instance::Cast(obj));
         break;
       case ConstantPoolTag::kType:
-        UNIMPLEMENTED();  // Encoding is under discussion with CFE team.
         obj = builder_->type_translator_.BuildType().raw();
         ASSERT(obj.IsAbstractType());
         break;
       case ConstantPoolTag::kTypeArguments:
-        UNIMPLEMENTED();  // Encoding is under discussion with CFE team.
         obj = builder_->type_translator_
                   .BuildTypeArguments(builder_->ReadListLength())
                   .raw();
@@ -1103,20 +1157,19 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
         for (intptr_t j = 0; j < length; j++) {
           intptr_t elem_index = builder_->ReadUInt();
           ASSERT(elem_index < i);
-          elem = obj_pool.ObjectAt(elem_index);
+          elem = pool.ObjectAt(elem_index);
           array.SetAt(j, elem);
         }
         obj = H.Canonicalize(Array::Cast(obj));
         ASSERT(!obj.IsNull());
       } break;
       case ConstantPoolTag::kInstance: {
-        obj =
+        cls =
             H.LookupClassByKernelClass(builder_->ReadCanonicalNameReference());
-        ASSERT(obj.IsClass());
-        obj = Instance::New(Class::Cast(obj), Heap::kOld);
+        obj = Instance::New(cls, Heap::kOld);
         intptr_t elem_index = builder_->ReadUInt();
         ASSERT(elem_index < i);
-        elem = obj_pool.ObjectAt(elem_index);
+        elem = pool.ObjectAt(elem_index);
         if (!elem.IsNull()) {
           ASSERT(elem.IsTypeArguments());
           Instance::Cast(obj).SetTypeArguments(TypeArguments::Cast(elem));
@@ -1128,7 +1181,7 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
           field = H.LookupFieldByKernelField(field_name);
           intptr_t elem_index = builder_->ReadUInt();
           ASSERT(elem_index < i);
-          elem = obj_pool.ObjectAt(elem_index);
+          elem = pool.ObjectAt(elem_index);
           Instance::Cast(obj).SetField(field, elem);
         }
         obj = H.Canonicalize(Instance::Cast(obj));
@@ -1138,34 +1191,193 @@ void BytecodeMetadataHelper::CopyBytecode(const Function& function) {
         ASSERT(String::Cast(obj).IsSymbol());
         break;
       case kTypeArgumentsForInstanceAllocation: {
-        obj =
+        cls =
             H.LookupClassByKernelClass(builder_->ReadCanonicalNameReference());
-        ASSERT(obj.IsClass());
         intptr_t elem_index = builder_->ReadUInt();
         ASSERT(elem_index < i);
-        elem = obj_pool.ObjectAt(elem_index);
+        elem = pool.ObjectAt(elem_index);
         ASSERT(elem.IsNull() || elem.IsTypeArguments());
-        elem = Type::New(Class::Cast(obj), TypeArguments::Cast(elem),
-                         TokenPosition::kNoSource);
-        elem = ClassFinalizer::FinalizeType(Class::Cast(obj), Type::Cast(elem));
+        elem =
+            Type::New(cls, TypeArguments::Cast(elem), TokenPosition::kNoSource);
+        elem = ClassFinalizer::FinalizeType(cls, Type::Cast(elem));
         obj = Type::Cast(elem).arguments();
+      } break;
+      case ConstantPoolTag::kContextOffset: {
+        intptr_t index = builder_->ReadUInt();
+        if (i == 0) {
+          obj = Smi::New(Context::parent_offset() / kWordSize);
+        } else {
+          obj = Smi::New(Context::variable_offset(index - 1) / kWordSize);
+        }
+      } break;
+      case ConstantPoolTag::kClosureFunction: {
+        name = H.DartSymbolPlain(builder_->ReadStringReference()).raw();
+        const Function& closure = Function::Handle(
+            builder_->zone_,
+            Function::NewClosureFunction(name, inner_function,
+                                         TokenPosition::kNoSource));
+
+        FunctionNodeHelper function_node_helper(builder_);
+        function_node_helper.ReadUntilExcluding(
+            FunctionNodeHelper::kTypeParameters);
+        builder_->LoadAndSetupTypeParameters(builder_->active_class(), closure,
+                                             builder_->ReadListLength(),
+                                             closure);
+        function_node_helper.SetJustRead(FunctionNodeHelper::kTypeParameters);
+
+        // Scope remains opened until ConstantPoolTag::kEndClosureFunctionScope.
+        ActiveTypeParametersScope scope(
+            builder_->active_class(), &closure,
+            TypeArguments::Handle(builder_->zone_, closure.type_parameters()),
+            builder_->zone_);
+
+        function_node_helper.ReadUntilExcluding(
+            FunctionNodeHelper::kPositionalParameters);
+
+        intptr_t required_parameter_count =
+            function_node_helper.required_parameter_count_;
+        intptr_t total_parameter_count =
+            function_node_helper.total_parameter_count_;
+
+        intptr_t positional_parameter_count = builder_->ReadListLength();
+
+        intptr_t named_parameter_count =
+            total_parameter_count - positional_parameter_count;
+
+        const intptr_t extra_parameters = 1;
+        closure.set_num_fixed_parameters(extra_parameters +
+                                         required_parameter_count);
+        if (named_parameter_count > 0) {
+          closure.SetNumOptionalParameters(named_parameter_count, false);
+        } else {
+          closure.SetNumOptionalParameters(
+              positional_parameter_count - required_parameter_count, true);
+        }
+        intptr_t parameter_count = extra_parameters + total_parameter_count;
+        closure.set_parameter_types(Array::Handle(
+            builder_->zone_, Array::New(parameter_count, Heap::kOld)));
+        closure.set_parameter_names(Array::Handle(
+            builder_->zone_, Array::New(parameter_count, Heap::kOld)));
+
+        intptr_t pos = 0;
+        closure.SetParameterTypeAt(pos, AbstractType::dynamic_type());
+        closure.SetParameterNameAt(pos, Symbols::ClosureParameter());
+        pos++;
+
+        for (intptr_t j = 0; j < positional_parameter_count; ++j, ++pos) {
+          VariableDeclarationHelper helper(builder_);
+          helper.ReadUntilExcluding(VariableDeclarationHelper::kType);
+          const AbstractType& type =
+              builder_->type_translator_.BuildVariableType();
+          Tag tag = builder_->ReadTag();  // read (first part of) initializer.
+          if (tag == kSomething) {
+            builder_->SkipExpression();  // read (actual) initializer.
+          }
+
+          closure.SetParameterTypeAt(pos, type);
+          closure.SetParameterNameAt(pos,
+                                     H.DartSymbolObfuscate(helper.name_index_));
+        }
+
+        intptr_t named_parameter_count_check = builder_->ReadListLength();
+        ASSERT(named_parameter_count_check == named_parameter_count);
+        for (intptr_t j = 0; j < named_parameter_count; ++j, ++pos) {
+          VariableDeclarationHelper helper(builder_);
+          helper.ReadUntilExcluding(VariableDeclarationHelper::kType);
+          const AbstractType& type =
+              builder_->type_translator_.BuildVariableType();
+          Tag tag = builder_->ReadTag();  // read (first part of) initializer.
+          if (tag == kSomething) {
+            builder_->SkipExpression();  // read (actual) initializer.
+          }
+
+          closure.SetParameterTypeAt(pos, type);
+          closure.SetParameterNameAt(pos,
+                                     H.DartSymbolObfuscate(helper.name_index_));
+        }
+
+        function_node_helper.SetJustRead(FunctionNodeHelper::kNamedParameters);
+
+        const AbstractType& return_type =
+            builder_->type_translator_.BuildVariableType();
+        closure.set_result_type(return_type);
+        function_node_helper.SetJustRead(FunctionNodeHelper::kReturnType);
+        // The closure has no body.
+        function_node_helper.ReadUntilExcluding(FunctionNodeHelper::kEnd);
+
+        pool.SetTypeAt(i, ObjectPool::kTaggedObject);
+        pool.SetObjectAt(i, closure);
+
+        // Continue reading the constant pool entries inside the opened
+        // ActiveTypeParametersScope until the scope gets closed by a
+        // kEndClosureFunctionScope tag, in which case control returns here.
+        i = ReadPoolEntries(function, closure, pool, i + 1);
+        // Pool entry at index i has been set to null, because it was a
+        // kEndClosureFunctionScope.
+        ASSERT(pool.ObjectAt(i) == Object::null());
+        continue;
+      }
+      case ConstantPoolTag::kEndClosureFunctionScope: {
+        // Entry is not used and set to null.
+        obj = Object::null();
+        pool.SetTypeAt(i, ObjectPool::kTaggedObject);
+        pool.SetObjectAt(i, obj);
+        return i;  // The caller will close the scope.
       } break;
       default:
         UNREACHABLE();
     }
-    obj_pool.SetTypeAt(i, ObjectPool::kTaggedObject);
-    obj_pool.SetObjectAt(i, obj);
+    pool.SetTypeAt(i, ObjectPool::kTaggedObject);
+    pool.SetObjectAt(i, obj);
   }
+  // Return the index of the last read pool entry.
+  return obj_count - 1;
+}
 
-  const Code& bytecode = Code::Handle(
-      builder_->zone_,
-      Code::FinalizeBytecode(reinterpret_cast<void*>(bytecode_data),
-                             bytecode_size, obj_pool));
-  function.AttachBytecode(bytecode);
+RawCode* BytecodeMetadataHelper::ReadBytecode(const ObjectPool& pool) {
+  // TODO(regis): Avoid copying bytecode from mapped kernel binary.
+  intptr_t size = builder_->reader_.ReadUInt();
+  intptr_t offset = builder_->reader_.offset();
+  uint8_t* data =
+      builder_->reader_.CopyDataIntoZone(builder_->zone_, offset, size);
+  builder_->reader_.set_offset(offset + size);
 
-  if (FLAG_dump_kernel_bytecode) {
-    KernelBytecodeDisassembler::Disassemble(function);
+  // Create and return code object.
+  return Code::FinalizeBytecode(reinterpret_cast<void*>(data), size, pool);
+}
+
+void BytecodeMetadataHelper::ReadExceptionsTable(const Code& bytecode) {
+  const ObjectPool& pool =
+      ObjectPool::Handle(builder_->zone_, bytecode.object_pool());
+  AbstractType& handled_type = AbstractType::Handle(builder_->zone_);
+
+  // Encoding of ExceptionsTable is described in
+  // pkg/vm/lib/bytecode/exceptions.dart.
+  intptr_t try_block_count = builder_->reader_.ReadListLength();
+  for (intptr_t i = 0; i < try_block_count; i++) {
+    intptr_t outer_try_index_plus1 = builder_->reader_.ReadUInt();
+    intptr_t outer_try_index = outer_try_index_plus1 - 1;
+    USE(outer_try_index);
+    intptr_t start_pc = builder_->reader_.ReadUInt();
+    USE(start_pc);
+    intptr_t end_pc = builder_->reader_.ReadUInt();
+    USE(end_pc);
+    intptr_t handler_pc = builder_->reader_.ReadUInt();
+    USE(handler_pc);
+    uint8_t flags = builder_->reader_.ReadByte();
+    // flagNeedsStackTrace = 1 << 0;
+    // flagIsSynthetic = 1 << 1;
+    USE(flags);
+
+    intptr_t type_count = builder_->reader_.ReadListLength();
+    for (intptr_t j = 0; j < type_count; j++) {
+      intptr_t type_index = builder_->reader_.ReadUInt();
+      ASSERT(type_index < pool.Length());
+      handled_type ^= pool.ObjectAt(type_index);
+    }
   }
+  // TODO(regis): Generate exception handlers (as well as pc descriptors)
+  // and store in bytecode: bytecode.set_exception_handlers(exception_handlers);
 }
 #endif  // defined(DART_USE_INTERPRETER)
 
@@ -1600,8 +1812,8 @@ void StreamingScopeBuilder::VisitFunctionNode() {
     first_body_token_position_ = builder_->reader_.min_position();
   }
 
-  // Ensure that :await_jump_var, :await_ctx_var, :async_op and
-  // :async_stack_trace are captured.
+  // Ensure that :await_jump_var, :await_ctx_var, :async_op,
+  // :async_completer and :async_stack_trace are captured.
   if (function_node_helper.async_marker_ == FunctionNodeHelper::kSyncYielding) {
     {
       LocalVariable* temp = NULL;
@@ -1618,6 +1830,13 @@ void StreamingScopeBuilder::VisitFunctionNode() {
     {
       LocalVariable* temp =
           scope_->LookupVariable(Symbols::AsyncOperation(), true);
+      if (temp != NULL) {
+        scope_->CaptureVariable(temp);
+      }
+    }
+    {
+      LocalVariable* temp =
+          scope_->LookupVariable(Symbols::AsyncCompleter(), true);
       if (temp != NULL) {
         scope_->CaptureVariable(temp);
       }
@@ -2157,6 +2376,9 @@ void StreamingScopeBuilder::VisitStatement() {
         ExitScope(builder_->reader_.min_position(),
                   builder_->reader_.max_position());
       }
+
+      FinalizeCatchVariables();
+
       --depth_.catch_;
       return;
     }
@@ -2173,6 +2395,8 @@ void StreamingScopeBuilder::VisitStatement() {
       AddCatchVariables();
 
       VisitStatement();  // read finalizer.
+
+      FinalizeCatchVariables();
 
       --depth_.catch_;
       return;
@@ -2598,6 +2822,30 @@ void StreamingScopeBuilder::AddExceptionVariable(
   variables->Add(v);
 }
 
+void StreamingScopeBuilder::FinalizeExceptionVariable(
+    GrowableArray<LocalVariable*>* variables,
+    GrowableArray<LocalVariable*>* raw_variables,
+    const String& symbol,
+    intptr_t nesting_depth) {
+  // No need to create variables for try/catch-statements inside
+  // nested functions.
+  if (depth_.function_ > 0) return;
+
+  LocalVariable* variable = (*variables)[nesting_depth - 1];
+  LocalVariable* raw_variable;
+  if (variable->is_captured()) {
+    raw_variable =
+        new LocalVariable(TokenPosition::kNoSource, TokenPosition::kNoSource,
+                          symbol, AbstractType::dynamic_type());
+    const bool ok = scope_->AddVariable(raw_variable);
+    ASSERT(ok);
+  } else {
+    raw_variable = variable;
+  }
+  raw_variables->EnsureLength(nesting_depth, nullptr);
+  (*raw_variables)[nesting_depth - 1] = raw_variable;
+}
+
 void StreamingScopeBuilder::AddTryVariables() {
   AddExceptionVariable(&result_->catch_context_variables,
                        ":saved_try_context_var", depth_.try_);
@@ -2608,6 +2856,16 @@ void StreamingScopeBuilder::AddCatchVariables() {
                        depth_.catch_);
   AddExceptionVariable(&result_->stack_trace_variables, ":stack_trace",
                        depth_.catch_);
+}
+
+void StreamingScopeBuilder::FinalizeCatchVariables() {
+  const intptr_t unique_id = result_->raw_variable_counter_++;
+  FinalizeExceptionVariable(
+      &result_->exception_variables, &result_->raw_exception_variables,
+      GenerateName(":raw_exception", unique_id), depth_.catch_);
+  FinalizeExceptionVariable(
+      &result_->stack_trace_variables, &result_->raw_stack_trace_variables,
+      GenerateName(":raw_stacktrace", unique_id), depth_.catch_);
 }
 
 void StreamingScopeBuilder::AddIteratorVariable() {
@@ -3104,8 +3362,9 @@ bool StreamingConstantEvaluator::IsCached(intptr_t offset) {
   return GetCachedConstant(offset, &result_);
 }
 
-Instance& StreamingConstantEvaluator::EvaluateExpression(intptr_t offset,
-                                                         bool reset_position) {
+RawInstance* StreamingConstantEvaluator::EvaluateExpression(
+    intptr_t offset,
+    bool reset_position) {
   ASSERT(Error::Handle(Z, H.thread()->sticky_error()).IsNull());
   if (!GetCachedConstant(offset, &result_)) {
     ASSERT(IsAllowedToEvaluate());
@@ -3223,9 +3482,7 @@ Instance& StreamingConstantEvaluator::EvaluateExpression(intptr_t offset,
       builder_->SkipExpression();
     }
   }
-  // We return a new `ZoneHandle` here on purpose: The intermediate language
-  // instructions do not make a copy of the handle, so we do it.
-  return Instance::ZoneHandle(Z, result_.raw());
+  return result_.raw();
 }
 
 Instance& StreamingConstantEvaluator::EvaluateListLiteral(intptr_t offset,
@@ -3280,7 +3537,7 @@ Instance& StreamingConstantEvaluator::EvaluateConstructorInvocation(
   return Instance::ZoneHandle(Z, result_.raw());
 }
 
-Object& StreamingConstantEvaluator::EvaluateExpressionSafe(intptr_t offset) {
+RawObject* StreamingConstantEvaluator::EvaluateExpressionSafe(intptr_t offset) {
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
     return EvaluateExpression(offset);
@@ -3289,7 +3546,7 @@ Object& StreamingConstantEvaluator::EvaluateExpressionSafe(intptr_t offset) {
     Error& error = Error::Handle(Z);
     error = thread->sticky_error();
     thread->clear_sticky_error();
-    return error;
+    return error.raw();
   }
 }
 
@@ -3437,8 +3694,9 @@ void StreamingConstantEvaluator::EvaluateStaticGet() {
 void StreamingConstantEvaluator::EvaluateMethodInvocation() {
   builder_->ReadPosition();  // read position.
   // This method call wasn't cached, so receiver et al. isn't cached either.
-  const Instance& receiver =
-      EvaluateExpression(builder_->ReaderOffset(), false);  // read receiver.
+  const Instance& receiver = Instance::Handle(
+      Z,
+      EvaluateExpression(builder_->ReaderOffset(), false));  // read receiver.
   Class& klass =
       Class::Handle(Z, isolate_->class_table()->At(receiver.GetClassId()));
   ASSERT(!klass.IsNull());
@@ -3463,8 +3721,9 @@ void StreamingConstantEvaluator::EvaluateMethodInvocation() {
 void StreamingConstantEvaluator::EvaluateDirectMethodInvocation() {
   builder_->ReadPosition();  // read position.
 
-  const Instance& receiver =
-      EvaluateExpression(builder_->ReaderOffset(), false);  // read receiver.
+  const Instance& receiver = Instance::Handle(
+      Z,
+      EvaluateExpression(builder_->ReaderOffset(), false));  // read receiver.
 
   NameIndex kernel_name =
       builder_->ReadCanonicalNameReference();  // read target_reference.
@@ -3570,7 +3829,7 @@ void StreamingConstantEvaluator::EvaluateConstructorInvocationInternal() {
   Instance* receiver = NULL;
   const TypeArguments* type_arguments_argument = NULL;
   if (!constructor.IsFactory()) {
-    receiver = &Instance::ZoneHandle(Z, Instance::New(klass, Heap::kOld));
+    receiver = &Instance::Handle(Z, Instance::New(klass, Heap::kOld));
     if (type_arguments != NULL) {
       receiver->SetTypeArguments(*type_arguments);
     }
@@ -3635,11 +3894,12 @@ void StreamingConstantEvaluator::EvaluateAsExpression() {
 
   const AbstractType& type = T.BuildType();
   if (!type.IsInstantiated() || type.IsMalformed()) {
+    const String& type_str = String::Handle(type.UserVisibleName());
     H.ReportError(
         script_, TokenPosition::kNoSource,
         "Not a constant expression: right hand side of an implicit "
         "as-expression is expected to be an instantiated type, got %s",
-        type.ToCString());
+        type_str.ToCString());
   }
 
   const TypeArguments& instantiator_type_arguments = TypeArguments::Handle();
@@ -3647,9 +3907,13 @@ void StreamingConstantEvaluator::EvaluateAsExpression() {
   Error& error = Error::Handle();
   if (!result_.IsInstanceOf(type, instantiator_type_arguments,
                             function_type_arguments, &error)) {
+    const AbstractType& rtype =
+        AbstractType::Handle(result_.GetType(Heap::kNew));
+    const String& result_str = String::Handle(rtype.UserVisibleName());
+    const String& type_str = String::Handle(type.UserVisibleName());
     H.ReportError(script_, TokenPosition::kNoSource,
                   "Not a constant expression: %s is not an instance of %s",
-                  result_.ToCString(), type.ToCString());
+                  result_str.ToCString(), type_str.ToCString());
   }
 }
 
@@ -3733,9 +3997,10 @@ void StreamingConstantEvaluator::EvaluateListLiteralInternal() {
   const Array& const_list =
       Array::ZoneHandle(Z, Array::New(length, Heap::kOld));
   const_list.SetTypeArguments(type_arguments);
+  Instance& expression = Instance::Handle(Z);
   for (intptr_t i = 0; i < length; ++i) {
-    const Instance& expression = EvaluateExpression(
-        builder_->ReaderOffset(), false);  // read ith expression.
+    expression = EvaluateExpression(builder_->ReaderOffset(),
+                                    false);  // read ith expression.
     const_list.SetAt(i, expression);
   }
   const_list.MakeImmutable();
@@ -3750,13 +4015,13 @@ void StreamingConstantEvaluator::EvaluateMapLiteralInternal() {
   intptr_t length = builder_->ReadListLength();  // read length of entries.
 
   // This MapLiteral wasn't cached, so content isn't cached either.
-  Array& const_kv_array =
-      Array::ZoneHandle(Z, Array::New(2 * length, Heap::kOld));
+  Array& const_kv_array = Array::Handle(Z, Array::New(2 * length, Heap::kOld));
+  Instance& temp = Instance::Handle(Z);
   for (intptr_t i = 0; i < length; ++i) {
-    const_kv_array.SetAt(2 * i + 0, EvaluateExpression(builder_->ReaderOffset(),
-                                                       false));  // read key.
-    const_kv_array.SetAt(2 * i + 1, EvaluateExpression(builder_->ReaderOffset(),
-                                                       false));  // read value.
+    temp = EvaluateExpression(builder_->ReaderOffset(), false);  // read key.
+    const_kv_array.SetAt(2 * i + 0, temp);
+    temp = EvaluateExpression(builder_->ReaderOffset(), false);  // read value.
+    const_kv_array.SetAt(2 * i + 1, temp);
   }
 
   const_kv_array.MakeImmutable();
@@ -3792,8 +4057,9 @@ void StreamingConstantEvaluator::EvaluateLet() {
   if (tag == kNothing) {
     local->SetConstValue(Instance::ZoneHandle(Z, Instance::null()));
   } else {
-    local->SetConstValue(EvaluateExpression(
-        builder_->ReaderOffset(), false));  // read rest of initializer.
+    local->SetConstValue(Instance::ZoneHandle(
+        Z, EvaluateExpression(builder_->ReaderOffset(),
+                              false)));  // read rest of initializer.
   }
 
   EvaluateExpression(builder_->ReaderOffset(), false);  // read body
@@ -3801,8 +4067,9 @@ void StreamingConstantEvaluator::EvaluateLet() {
 
 void StreamingConstantEvaluator::EvaluatePartialTearoffInstantiation() {
   // This method call wasn't cached, so receiver et al. isn't cached either.
-  const Instance& receiver =
-      EvaluateExpression(builder_->ReaderOffset(), false);  // read receiver.
+  const Instance& receiver = Instance::Handle(
+      Z,
+      EvaluateExpression(builder_->ReaderOffset(), false));  // read receiver.
   if (!receiver.IsClosure()) {
     H.ReportError(script_, TokenPosition::kNoSource, "Expected closure.");
   }
@@ -3811,26 +4078,16 @@ void StreamingConstantEvaluator::EvaluatePartialTearoffInstantiation() {
   // read type arguments.
   intptr_t num_type_args = builder_->ReadListLength();
   const TypeArguments* type_args = &T.BuildTypeArguments(num_type_args);
-  // Even if all dynamic types are passed in, we need to put a vector in here to
-  // distinguish this partially applied tearoff from a normal tearoff. This is
-  // necessary because the tearoff wrapper (BuildGraphOfImplicitClosureFunction)
-  // needs to throw NSM if type arguments are passed to a partially applied
-  // tearoff.
-  if (type_args->IsNull()) {
-    type_args =
-        &TypeArguments::ZoneHandle(Z, TypeArguments::New(num_type_args));
-    for (intptr_t i = 0; i < num_type_args; ++i) {
-      type_args->SetTypeAt(i, Type::ZoneHandle(Z, Type::DynamicType()));
-    }
-  }
 
   // Create new closure with the type arguments inserted, and other things
   // copied over.
   Closure& new_closure = Closure::Handle(
-      Z, Closure::New(TypeArguments::Handle(
-                          Z, old_closure.instantiator_type_arguments()),
-                      *type_args, Function::Handle(Z, old_closure.function()),
-                      Context::Handle(Z, old_closure.context()), Heap::kOld));
+      Z,
+      Closure::New(
+          TypeArguments::Handle(Z, old_closure.instantiator_type_arguments()),
+          TypeArguments::Handle(old_closure.function_type_arguments()),
+          *type_args, Function::Handle(Z, old_closure.function()),
+          Context::Handle(Z, old_closure.context()), Heap::kOld));
   result_ = H.Canonicalize(new_closure);
 }
 
@@ -3877,7 +4134,9 @@ void StreamingConstantEvaluator::EvaluateNullLiteral() {
 }
 
 void StreamingConstantEvaluator::EvaluateConstantExpression() {
-  result_ ^= H.constants().At(builder_->ReadUInt());
+  KernelConstantsMap constant_map(H.constants().raw());
+  result_ ^= constant_map.GetOrDie(builder_->ReadUInt());
+  ASSERT(constant_map.Release().raw() == H.constants().raw());
 }
 
 // This depends on being about to read the list of positionals on arguments.
@@ -3886,13 +4145,20 @@ const Object& StreamingConstantEvaluator::RunFunction(
     intptr_t argument_count,
     const Instance* receiver,
     const TypeArguments* type_args) {
+  // We use a kernel2kernel constant evaluator in Dart 2.0 AOT compilation, so
+  // we should never end up evaluating constants using the VM's constant
+  // evaluator.
+  if (I->strong() && FLAG_precompiled_mode) {
+    UNREACHABLE();
+  }
+
   // We do not support generic methods yet.
   ASSERT((receiver == NULL) || (type_args == NULL));
   intptr_t extra_arguments =
       (receiver != NULL ? 1 : 0) + (type_args != NULL ? 1 : 0);
 
   // Build up arguments.
-  const Array& arguments = Array::ZoneHandle(
+  const Array& arguments = Array::Handle(
       Z, Array::New(extra_arguments + argument_count, H.allocation_space()));
   intptr_t pos = 0;
   if (receiver != NULL) {
@@ -3913,7 +4179,7 @@ const Object& StreamingConstantEvaluator::RunFunction(
   // List of named.
   list_length = builder_->ReadListLength();  // read list length.
   const Array& names =
-      Array::ZoneHandle(Z, Array::New(list_length, H.allocation_space()));
+      Array::Handle(Z, Array::New(list_length, H.allocation_space()));
   for (intptr_t i = 0; i < list_length; ++i) {
     String& name = H.DartSymbolObfuscate(
         builder_->ReadStringReference());  // read ith name index.
@@ -4838,7 +5104,8 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfFieldInitializer() {
       flow_graph_builder_->CheckStackOverflowInPrologue(field_helper.position_);
   if (field_helper.IsConst()) {
     // this will (potentially) read the initializer, but reset the position.
-    body += Constant(constant_evaluator_.EvaluateExpression(ReaderOffset()));
+    body += Constant(Instance::ZoneHandle(
+        Z, constant_evaluator_.EvaluateExpression(ReaderOffset())));
     SkipExpression();  // read the initializer.
   } else {
     body += BuildExpression();  // read initializer.
@@ -4896,7 +5163,8 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfFieldAccessor(
     // contain because it would detect spurious circular initialization when it
     // checks for the transition sentinel.
     ASSERT(initializer_tag == kSomething);
-    body += Constant(constant_evaluator_.EvaluateExpression(ReaderOffset()));
+    body += Constant(Instance::ZoneHandle(
+        Z, constant_evaluator_.EvaluateExpression(ReaderOffset())));
   } else {
     // The field always has an initializer because static fields without
     // initializers are initialized eagerly and do not have implicit getters.
@@ -4947,8 +5215,8 @@ void StreamingFlowGraphBuilder::SetupDefaultParameterValues() {
         if (tag == kSomething) {
           // this will (potentially) read the initializer,
           // but reset the position.
-          default_value =
-              &constant_evaluator_.EvaluateExpression(ReaderOffset());
+          default_value = &Instance::ZoneHandle(
+              Z, constant_evaluator_.EvaluateExpression(ReaderOffset()));
           SkipExpression();  // read (actual) initializer.
         } else {
           default_value = &Instance::ZoneHandle(Z, Instance::null());
@@ -4975,8 +5243,8 @@ void StreamingFlowGraphBuilder::SetupDefaultParameterValues() {
         if (tag == kSomething) {
           // this will (potentially) read the initializer,
           // but reset the position.
-          default_value =
-              &constant_evaluator_.EvaluateExpression(ReaderOffset());
+          default_value = &Instance::ZoneHandle(
+              Z, constant_evaluator_.EvaluateExpression(ReaderOffset()));
           SkipExpression();  // read (actual) initializer.
         } else {
           default_value = &Instance::ZoneHandle(Z, Instance::null());
@@ -5191,6 +5459,46 @@ Fragment StreamingFlowGraphBuilder::BuildInitializers(
   return instructions;
 }
 
+// If no type arguments are passed to a generic function, we need to fill the
+// type arguments in with the default types stored on the TypeParameter nodes
+// in Kernel.
+Fragment StreamingFlowGraphBuilder::BuildDefaultTypeHandling(
+    const Function& function,
+    intptr_t type_parameters_offset) {
+  if (function.IsGeneric() && I->reify_generic_functions()) {
+    AlternativeReadingScope alt(&reader_);
+    SetOffset(type_parameters_offset);
+    intptr_t num_type_params = ReadListLength();
+    ASSERT(num_type_params == function.NumTypeParameters());
+    TypeArguments& default_types =
+        TypeArguments::ZoneHandle(TypeArguments::New(num_type_params));
+    for (intptr_t i = 0; i < num_type_params; ++i) {
+      TypeParameterHelper helper(this);
+      helper.ReadUntilExcludingAndSetJustRead(
+          TypeParameterHelper::kDefaultType);
+      if (ReadTag() == kSomething) {
+        default_types.SetTypeAt(i, T.BuildType());
+      } else {
+        default_types.SetTypeAt(i, Object::dynamic_type());
+      }
+      helper.Finish();
+    }
+    default_types = default_types.Canonicalize();
+
+    if (!default_types.IsNull()) {
+      // clang-format off
+      return B->TestAnyTypeArgs(/*then=*/{}, /*else=*/{
+          TranslateInstantiatedTypeArguments(default_types),
+          StoreLocal(TokenPosition::kNoSource,
+                     parsed_function()->function_type_arguments()),
+          Drop()
+        });
+      // clang-format on
+    }
+  }
+  return Fragment();
+}
+
 FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfImplicitClosureFunction(
     const Function& function) {
   const Function& parent = Function::ZoneHandle(Z, function.parent_function());
@@ -5227,6 +5535,11 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfImplicitClosureFunction(
   body +=
       flow_graph_builder_->CheckStackOverflowInPrologue(function.token_pos());
 
+  FunctionNodeHelper function_node_helper(this);
+  function_node_helper.ReadUntilExcluding(FunctionNodeHelper::kTypeParameters);
+
+  body += BuildDefaultTypeHandling(function, ReaderOffset());
+
   intptr_t type_args_len = 0;
   if (I->reify_generic_functions() && function.IsGeneric()) {
     type_args_len = function.NumTypeParameters();
@@ -5234,9 +5547,6 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfImplicitClosureFunction(
     body += LoadLocal(parsed_function()->function_type_arguments());
     body += PushArgument();
   }
-
-  FunctionNodeHelper function_node_helper(this);
-  function_node_helper.ReadUntilExcluding(FunctionNodeHelper::kTypeParameters);
 
   if (I->argument_type_checks()) {
     if (!target.NeedsArgumentTypeChecks(I)) {
@@ -5367,7 +5677,7 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
   function_node_helper.ReadUntilExcluding(
       FunctionNodeHelper::kPositionalParameters);
 
-  body += NullConstant();
+  body += MakeTemp();
   LocalVariable* result = MakeTemporary();
 
   // Do "++argument_count" if any type arguments were passed.
@@ -5376,27 +5686,13 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
   body += StoreLocal(TokenPosition::kNoSource, argument_count_var);
   body += Drop();
   if (function.IsGeneric() && Isolate::Current()->reify_generic_functions()) {
-    Fragment test_generic;
-    JoinEntryInstr* join = BuildJoinEntry();
-
-    TargetEntryInstr *passed_type_args, *not_passed_type_args;
-    test_generic += B->LoadArgDescriptor();
-    test_generic += LoadField(ArgumentsDescriptor::type_args_len_offset());
-    test_generic += IntConstant(0);
-    test_generic += BranchIfEqual(&not_passed_type_args, &passed_type_args,
-                                  /*negate=*/false);
-
-    Fragment passed_type_args_frag(passed_type_args);
-    passed_type_args_frag += IntConstant(1);
-    passed_type_args_frag +=
-        StoreLocal(TokenPosition::kNoSource, argument_count_var);
-    passed_type_args_frag += Drop();
-    passed_type_args_frag += Goto(join);
-
-    Fragment not_passed_type_args_frag(not_passed_type_args);
-    not_passed_type_args_frag += Goto(join);
-
-    body += Fragment(test_generic.entry, join);
+    // clang-format off
+    body += flow_graph_builder_->TestAnyTypeArgs(/*then=*/{
+        IntConstant(1),
+        StoreLocal(TokenPosition::kNoSource, argument_count_var),
+        Drop()
+      }, /*else=*/{});
+    // clang-format on
   }
 
   if (function.HasOptionalParameters()) {
@@ -5413,7 +5709,13 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
   //
   // var arguments = new Array<dynamic>(argument_count);
   //
-  // for (int i = 0; i < argument_count; ++i) {
+  // int i = 0;
+  // if (any type arguments are passed) {
+  //   arguments[0] = function_type_arguments;
+  //   ++i;
+  // }
+  //
+  // for (; i < argument_count; ++i) {
   //   arguments[i] = LoadFpRelativeSlot(
   //       kWordSize * (kParamEndSlotFromFp + argument_count - i));
   // }
@@ -5428,6 +5730,26 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
     body += IntConstant(0);
     body += StoreLocal(TokenPosition::kNoSource, index);
     body += Drop();
+
+    // if (any type arguments are passed) {
+    //   arguments[0] = function_type_arguments;
+    //   i = 1;
+    // }
+    if (function.IsGeneric() && Isolate::Current()->reify_generic_functions()) {
+      // clang-format off
+      Fragment store_type_arguments = {
+            LoadLocal(arguments),
+            IntConstant(0),
+            LoadFunctionTypeArguments(),
+            StoreIndexed(kArrayCid),
+            Drop(),
+            IntConstant(1),
+            StoreLocal(TokenPosition::kNoSource, index),
+            Drop()
+          };
+      // clang-format on
+      body += B->TestAnyTypeArgs(store_type_arguments, {});
+    }
 
     TargetEntryInstr* body_entry;
     TargetEntryInstr* loop_exit;
@@ -5515,10 +5837,6 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
   body += LoadLocal(arguments);
   body += PushArgument();
 
-  // false -> this is not super NSM
-  body += Constant(Bool::False());
-  body += PushArgument();
-
   if (throw_no_such_method_error) {
     const Function& parent =
         Function::ZoneHandle(Z, function.parent_function());
@@ -5541,12 +5859,30 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfNoSuchMethodForwarder(
   }
   body += PushArgument();
 
+  // Push the number of delayed type arguments.
+  if (function.IsClosureFunction()) {
+    LocalVariable* closure =
+        parsed_function()->node_sequence()->scope()->VariableAt(0);
+    body += B->TestDelayedTypeArgs(
+        closure,
+        Fragment({IntConstant(function.NumTypeParameters()),
+                  StoreLocal(TokenPosition::kNoSource, argument_count_var),
+                  Drop()}),
+        Fragment({IntConstant(0),
+                  StoreLocal(TokenPosition::kNoSource, argument_count_var),
+                  Drop()}));
+    body += LoadLocal(argument_count_var);
+  } else {
+    body += IntConstant(0);
+  }
+  body += PushArgument();
+
   const Class& mirror_class =
       Class::Handle(Z, Library::LookupCoreClass(Symbols::InvocationMirror()));
   ASSERT(!mirror_class.IsNull());
   const Function& allocation_function = Function::ZoneHandle(
-      Z, mirror_class.LookupStaticFunction(
-             Library::PrivateCoreLibName(Symbols::AllocateInvocationMirror())));
+      Z, mirror_class.LookupStaticFunction(Library::PrivateCoreLibName(
+             Symbols::AllocateInvocationMirrorForClosure())));
   ASSERT(!allocation_function.IsNull());
   body += StaticCall(TokenPosition::kMinSource, allocation_function,
                      /* argument_count = */ 5, ICData::kStatic);
@@ -5624,9 +5960,8 @@ Fragment StreamingFlowGraphBuilder::BuildArgumentTypeChecks(
         bound = forwarding_param.bound();
       }
 
-      if (I->strong() && !bound.IsObjectType() &&
+      if (I->strong() && !bound.IsObjectType() && !bound.IsDynamicType() &&
           (I->reify_generic_functions() || dart_function.IsFactory())) {
-        ASSERT(!bound.IsDynamicType());
         TypeParameter& param = TypeParameter::Handle(Z);
         if (dart_function.IsFactory()) {
           param ^= TypeArguments::Handle(
@@ -5873,7 +6208,7 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfFunction(bool constructor) {
         dispatch += Drop();
       }
       if (i == (yield_continuations().length() - 1)) {
-        // We reached the last possility, no need to build more ifs.
+        // We reached the last possibility, no need to build more ifs.
         // Continue to the last continuation.
         // Note: continuations start with nop DropTemps instruction
         // which acts like an anchor, so we need to skip it.
@@ -5912,6 +6247,9 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfFunction(bool constructor) {
   // body because it needs to be executed everytime we enter the function -
   // even if we are resuming from the yield.
   Fragment prologue;
+
+  prologue += BuildDefaultTypeHandling(dart_function, type_parameters_offset);
+
   if (dart_function.IsClosureFunction() &&
       dart_function.NumParentTypeParameters() > 0 &&
       I->reify_generic_functions()) {
@@ -6054,7 +6392,7 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraph(intptr_t kernel_offset) {
   // TODO(regis): Clean up this logic of when to compile.
   // If the bytecode was previously loaded, we really want to compile.
   if (!function.HasBytecode()) {
-    bytecode_metadata_helper_.CopyBytecode(function);
+    bytecode_metadata_helper_.ReadMetadata(function);
     if (function.HasBytecode()) {
       return NULL;
     }
@@ -7081,7 +7419,8 @@ CatchBlock* StreamingFlowGraphBuilder::catch_block() {
 }
 
 ActiveClass* StreamingFlowGraphBuilder::active_class() {
-  return &flow_graph_builder_->active_class_;
+  return (flow_graph_builder_ != NULL) ? &flow_graph_builder_->active_class_
+                                       : NULL;
 }
 
 ScopeBuildingResult* StreamingFlowGraphBuilder::scopes() {
@@ -7465,6 +7804,10 @@ Fragment StreamingFlowGraphBuilder::DropTempsPreserveTop(
   return flow_graph_builder_->DropTempsPreserveTop(num_temps_to_drop);
 }
 
+Fragment StreamingFlowGraphBuilder::MakeTemp() {
+  return flow_graph_builder_->MakeTemp();
+}
+
 Fragment StreamingFlowGraphBuilder::NullConstant() {
   return flow_graph_builder_->NullConstant();
 }
@@ -7736,7 +8079,7 @@ Fragment StreamingFlowGraphBuilder::BuildPropertySet(TokenPosition* p) {
   const DirectCallMetadata direct_call =
       direct_call_metadata_helper_.GetDirectTargetForPropertySet(offset);
 
-  Fragment instructions(NullConstant());
+  Fragment instructions(MakeTemp());
   LocalVariable* variable = MakeTemporary();
 
   const TokenPosition position = ReadPosition();  // read position.
@@ -7954,7 +8297,7 @@ Fragment StreamingFlowGraphBuilder::BuildSuperPropertySet(TokenPosition* p) {
 
   Function& function = FindMatchingFunctionAnyArgs(klass, setter_name);
 
-  Fragment instructions(NullConstant());
+  Fragment instructions(MakeTemp());
   LocalVariable* value = MakeTemporary();  // this holds RHS value
 
   if (function.IsNull()) {
@@ -8064,7 +8407,7 @@ Fragment StreamingFlowGraphBuilder::BuildDirectPropertySet(TokenPosition* p) {
   const TokenPosition position = ReadPosition();  // read position.
   if (p != NULL) *p = position;
 
-  Fragment instructions(NullConstant());
+  Fragment instructions(MakeTemp());
   LocalVariable* value = MakeTemporary();
 
   instructions += BuildExpression();  // read receiver.
@@ -8109,7 +8452,8 @@ Fragment StreamingFlowGraphBuilder::BuildStaticGet(TokenPosition* p) {
     const Field& field =
         Field::ZoneHandle(Z, H.LookupFieldByKernelField(target));
     if (field.is_const()) {
-      return Constant(constant_evaluator_.EvaluateExpression(offset));
+      return Constant(Instance::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpression(offset)));
     } else {
       const Class& owner = Class::Handle(Z, field.Owner());
       const String& getter_name = H.DartGetterName(target);
@@ -8131,7 +8475,8 @@ Fragment StreamingFlowGraphBuilder::BuildStaticGet(TokenPosition* p) {
       return StaticCall(position, function, 0, Array::null_array(),
                         ICData::kStatic, &result_type);
     } else if (H.IsMethod(target)) {
-      return Constant(constant_evaluator_.EvaluateExpression(offset));
+      return Constant(Instance::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpression(offset)));
     } else {
       UNIMPLEMENTED();
     }
@@ -8208,7 +8553,8 @@ Fragment StreamingFlowGraphBuilder::BuildMethodInvocation(TokenPosition* p) {
     intptr_t argument_count = PeekArgumentsCount() + 1;
 
     if ((argument_count == 1) && (token_kind == Token::kNEGATE)) {
-      const Object& result = constant_evaluator_.EvaluateExpressionSafe(offset);
+      const Object& result = Object::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpressionSafe(offset));
       if (!result.IsError()) {
         SkipArguments();               // read arguments.
         SkipCanonicalNameReference();  // read interface_target_reference.
@@ -8217,7 +8563,8 @@ Fragment StreamingFlowGraphBuilder::BuildMethodInvocation(TokenPosition* p) {
     } else if ((argument_count == 2) &&
                Token::IsBinaryArithmeticOperator(token_kind) &&
                IsNumberLiteral(PeekArgumentsFirstPositionalTag())) {
-      const Object& result = constant_evaluator_.EvaluateExpressionSafe(offset);
+      const Object& result = Object::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpressionSafe(offset));
       if (!result.IsError()) {
         SkipArguments();               // read arguments.
         SkipCanonicalNameReference();  // read interface_target_reference.
@@ -9012,7 +9359,8 @@ Fragment StreamingFlowGraphBuilder::BuildSymbolLiteral(
 
   intptr_t offset = ReaderOffset() - 1;  // EvaluateExpression needs the tag.
   SkipStringReference();                 // read index into string table.
-  return Constant(constant_evaluator_.EvaluateExpression(offset));
+  return Constant(
+      Instance::ZoneHandle(Z, constant_evaluator_.EvaluateExpression(offset)));
 }
 
 Fragment StreamingFlowGraphBuilder::BuildTypeLiteral(TokenPosition* position) {
@@ -9303,8 +9651,12 @@ Fragment StreamingFlowGraphBuilder::BuildFutureNullValue(
 Fragment StreamingFlowGraphBuilder::BuildConstantExpression(
     TokenPosition* position) {
   if (position != NULL) *position = TokenPosition::kNoSource;
-  const intptr_t constant_index = ReadUInt();
-  return Constant(Object::ZoneHandle(Z, H.constants().At(constant_index)));
+  const intptr_t constant_offset = ReadUInt();
+  KernelConstantsMap constant_map(H.constants().raw());
+  Fragment result =
+      Constant(Object::ZoneHandle(Z, constant_map.GetOrDie(constant_offset)));
+  ASSERT(constant_map.Release().raw() == H.constants().raw());
+  return result;
 }
 
 Fragment StreamingFlowGraphBuilder::BuildPartialTearoffInstantiation(
@@ -9861,8 +10213,8 @@ Fragment StreamingFlowGraphBuilder::BuildSwitchStatement() {
         TargetEntryInstr* otherwise;
 
         TokenPosition position = ReadPosition();  // read jth position.
-        current_instructions +=
-            Constant(constant_evaluator_.EvaluateExpression(ReaderOffset()));
+        current_instructions += Constant(Instance::ZoneHandle(
+            Z, constant_evaluator_.EvaluateExpression(ReaderOffset())));
         SkipExpression();  // read jth expression.
         current_instructions += PushArgument();
         current_instructions += LoadLocal(scopes()->switch_variable);
@@ -10319,8 +10671,9 @@ Fragment StreamingFlowGraphBuilder::BuildVariableDeclaration() {
     instructions += NullConstant();
   } else {
     if (helper.IsConst()) {
-      const Instance& constant_value = constant_evaluator_.EvaluateExpression(
-          ReaderOffset());  // read initializer form current position.
+      const Instance& constant_value = Instance::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpression(
+                 ReaderOffset()));  // read initializer form current position.
       variable->SetConstValue(constant_value);
       instructions += Constant(constant_value);
       SkipExpression();  // skip initializer.
@@ -10701,8 +11054,8 @@ RawObject* StreamingFlowGraphBuilder::BuildParameterDescriptor(
     Tag tag = ReadTag();  // read (first part of) initializer.
     if (tag == kSomething) {
       // this will (potentially) read the initializer, but reset the position.
-      Instance& constant =
-          constant_evaluator_.EvaluateExpression(ReaderOffset());
+      Instance& constant = Instance::ZoneHandle(
+          Z, constant_evaluator_.EvaluateExpression(ReaderOffset()));
       SkipExpression();  // read (actual) initializer.
       param_descriptor.SetAt(entry_start + Parser::kParameterDefaultValueOffset,
                              constant);
@@ -10718,9 +11071,16 @@ RawObject* StreamingFlowGraphBuilder::BuildParameterDescriptor(
   return param_descriptor.raw();
 }
 
-RawObject* StreamingFlowGraphBuilder::EvaluateMetadata(intptr_t kernel_offset) {
+RawObject* StreamingFlowGraphBuilder::EvaluateMetadata(
+    intptr_t kernel_offset,
+    const Class& owner_class) {
   SetOffset(kernel_offset);
   const Tag tag = PeekTag();
+
+  // Setup active_class in type translator for type finalization.
+  ActiveClass active_class;
+  active_class.klass = &owner_class;
+  type_translator_.set_active_class(&active_class);
 
   if (tag == kClass) {
     ClassHelper class_helper(this);
@@ -10741,12 +11101,15 @@ RawObject* StreamingFlowGraphBuilder::EvaluateMetadata(intptr_t kernel_offset) {
   intptr_t list_length = ReadListLength();  // read list length.
   const Array& metadata_values =
       Array::Handle(Z, Array::New(list_length, H.allocation_space()));
+  Instance& value = Instance::Handle(Z);
   for (intptr_t i = 0; i < list_length; ++i) {
     // this will (potentially) read the expression, but reset the position.
-    Instance& value = constant_evaluator_.EvaluateExpression(ReaderOffset());
+    value = constant_evaluator_.EvaluateExpression(ReaderOffset());
     SkipExpression();  // read (actual) initializer.
     metadata_values.SetAt(i, value);
   }
+
+  type_translator_.set_active_class(NULL);
 
   return metadata_values.raw();
 }
@@ -10912,51 +11275,39 @@ void StreamingFlowGraphBuilder::EnsureMetadataIsScanned() {
 
   // Read metadataMappings elements.
   for (uint32_t i = 0; i < metadata_num; ++i) {
-    // Read nodeReferences length.
+    // Read nodeOffsetToMetadataOffset length.
     offset -= kUInt32Size;
-    uint32_t node_references_num = reader.ReadUInt32At(offset);
-
-    // Skip nodeReferences and read nodeOffsetToMetadataOffset length.
-    offset -= node_references_num * kUInt32Size + kUInt32Size;
     uint32_t mappings_num = reader.ReadUInt32At(offset);
 
     // Skip nodeOffsetToMetadataOffset and read tag.
     offset -= mappings_num * 2 * kUInt32Size + kUInt32Size;
     StringIndex tag = StringIndex(reader.ReadUInt32At(offset));
 
+    if (mappings_num == 0) {
+      continue;
+    }
+
     // Check recognized metadata
     if (H.StringEquals(tag, DirectCallMetadataHelper::tag())) {
-      ASSERT(node_references_num == 0);
-
-      if (mappings_num > 0) {
-        if (!FLAG_precompiled_mode) {
-          FATAL("DirectCallMetadata is allowed in precompiled mode only");
-        }
-        direct_call_metadata_helper_.SetMetadataMappings(offset + kUInt32Size,
-                                                         mappings_num);
+      if (!FLAG_precompiled_mode) {
+        FATAL("DirectCallMetadata is allowed in precompiled mode only");
       }
+      direct_call_metadata_helper_.SetMetadataMappings(offset + kUInt32Size,
+                                                       mappings_num);
     } else if (H.StringEquals(tag, InferredTypeMetadataHelper::tag())) {
-      ASSERT(node_references_num == 0);
-
-      if (mappings_num > 0) {
-        if (!FLAG_precompiled_mode) {
-          FATAL("InferredTypeMetadata is allowed in precompiled mode only");
-        }
-        inferred_type_metadata_helper_.SetMetadataMappings(offset + kUInt32Size,
-                                                           mappings_num);
+      if (!FLAG_precompiled_mode) {
+        FATAL("InferredTypeMetadata is allowed in precompiled mode only");
       }
+      inferred_type_metadata_helper_.SetMetadataMappings(offset + kUInt32Size,
+                                                         mappings_num);
     } else if (H.StringEquals(tag, ProcedureAttributesMetadataHelper::tag())) {
-      ASSERT(node_references_num == 0);
-
-      if (mappings_num > 0) {
-        if (!FLAG_precompiled_mode) {
-          FATAL(
-              "ProcedureAttributesMetadata is allowed in precompiled mode "
-              "only");
-        }
-        procedure_attributes_metadata_helper_.SetMetadataMappings(
-            offset + kUInt32Size, mappings_num);
+      if (!FLAG_precompiled_mode) {
+        FATAL(
+            "ProcedureAttributesMetadata is allowed in precompiled mode "
+            "only");
       }
+      procedure_attributes_metadata_helper_.SetMetadataMappings(
+          offset + kUInt32Size, mappings_num);
     } else if (H.StringEquals(tag, BytecodeMetadataHelper::tag())) {
       bytecode_metadata_helper_.SetMetadataMappings(offset + kUInt32Size,
                                                     mappings_num);
@@ -10980,9 +11331,13 @@ const Array& ConstantHelper::ReadConstantTable() {
   temp_object_ = temp_class_.EnsureIsFinalized(H.thread());
   ASSERT(temp_object_.IsNull());
 
-  const Array& constants =
-      Array::Handle(Z, Array::New(number_of_constants, Heap::kOld));
+  KernelConstantsMap constants(
+      HashTables::New<KernelConstantsMap>(number_of_constants, Heap::kOld));
+
+  const intptr_t start_offset = builder_.ReaderOffset();
+
   for (intptr_t i = 0; i < number_of_constants; ++i) {
+    const intptr_t offset = builder_.ReaderOffset();
     const intptr_t constant_tag = builder_.ReadByte();
     switch (constant_tag) {
       case kNullConstant:
@@ -10993,10 +11348,8 @@ const Array& ConstantHelper::ReadConstantTable() {
                                                   : Object::bool_false().raw();
         break;
       case kIntConstant: {
-        temp_instance_ = const_evaluator_
-                             .EvaluateExpression(builder_.ReaderOffset(),
-                                                 false /* reset position */)
-                             .raw();
+        temp_instance_ = const_evaluator_.EvaluateExpression(
+            builder_.ReaderOffset(), false /* reset position */);
         break;
       }
       case kDoubleConstant: {
@@ -11019,9 +11372,9 @@ const Array& ConstantHelper::ReadConstantTable() {
         temp_array_ = ImmutableArray::New(length, Heap::kOld);
         temp_array_.SetTypeArguments(temp_type_arguments_);
         for (intptr_t j = 0; j < length; ++j) {
-          const intptr_t entry_index = builder_.ReadUInt();
-          ASSERT(entry_index < i);  // We have a DAG!
-          temp_object_ = constants.At(entry_index);
+          const intptr_t entry_offset = builder_.ReadUInt();
+          ASSERT(entry_offset < offset);  // We have a DAG!
+          temp_object_ = constants.GetOrDie(entry_offset);
           temp_array_.SetAt(j, temp_object_);
         }
 
@@ -11058,9 +11411,9 @@ const Array& ConstantHelper::ReadConstantTable() {
         for (intptr_t j = 0; j < number_of_fields; ++j) {
           temp_field_ =
               H.LookupFieldByKernelField(builder_.ReadCanonicalNameReference());
-          const intptr_t entry_index = builder_.ReadUInt();
-          ASSERT(entry_index < i);  // We have a DAG!
-          temp_object_ = constants.At(entry_index);
+          const intptr_t entry_offset = builder_.ReadUInt();
+          ASSERT(entry_offset < offset);  // We have a DAG!
+          temp_object_ = constants.GetOrDie(entry_offset);
           temp_instance_.SetField(temp_field_, temp_object_);
         }
 
@@ -11068,8 +11421,8 @@ const Array& ConstantHelper::ReadConstantTable() {
         break;
       }
       case kPartialInstantiationConstant: {
-        const intptr_t entry_index = builder_.ReadUInt();
-        temp_object_ = constants.At(entry_index);
+        const intptr_t entry_offset = builder_.ReadUInt();
+        temp_object_ = constants.GetOrDie(entry_offset);
 
         // Happens if the tearoff was in the vmservice library and we have
         // [skip_vm_service_library] enabled.
@@ -11123,9 +11476,9 @@ const Array& ConstantHelper::ReadConstantTable() {
       default:
         UNREACHABLE();
     }
-    constants.SetAt(i, temp_instance_);
+    constants.InsertNewOrGetValue(offset - start_offset, temp_instance_);
   }
-  return constants;
+  return Array::Handle(Z, constants.Release().raw());
 }
 
 void ConstantHelper::InstantiateTypeArguments(const Class& receiver_class,

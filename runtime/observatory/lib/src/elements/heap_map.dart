@@ -181,7 +181,7 @@ class HeapMapElement extends HtmlElement implements Renderable {
     var pagePixels = _pageHeight * _fragmentationData.width;
     var index = new PixelReference(_fragmentationData, point).index;
     var pageIndex = index ~/ pagePixels;
-    var pageOffset = index % pagePixels;
+    num pageOffset = index % pagePixels;
     var pages = _fragmentation['pages'];
     if (pageIndex < 0 || pageIndex >= pages.length) {
       return null;
@@ -255,8 +255,8 @@ class HeapMapElement extends HtmlElement implements Renderable {
     var pages = _fragmentation['pages'];
     _status = 'Loaded $startPage of ${pages.length} pages';
     _r.dirty();
-    var startY = startPage * _pageHeight;
-    var endY = startY + _pageHeight;
+    var startY = (startPage * _pageHeight).round();
+    var endY = startY + _pageHeight.round();
     if (startPage >= pages.length || endY > _fragmentationData.height) {
       return;
     }
@@ -289,9 +289,8 @@ class HeapMapElement extends HtmlElement implements Renderable {
     if (gc != null) {
       params['gc'] = gc;
     }
-    return isolate
-        .invokeRpc('_getHeapMap', params)
-        .then((S.ServiceMap response) {
+    return isolate.invokeRpc('_getHeapMap', params).then((serviceObject) {
+      S.ServiceMap response = serviceObject;
       assert(response['type'] == 'HeapMap');
       _fragmentation = response;
       _updateFragmentationData();

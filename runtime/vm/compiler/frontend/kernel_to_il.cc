@@ -1178,18 +1178,53 @@ Fragment FlowGraphBuilder::CatchBlockEntry(const Array& handler_types,
                                            intptr_t handler_index,
                                            bool needs_stacktrace,
                                            bool is_synthesized) {
-  ASSERT(CurrentException()->is_captured() ==
-         CurrentStackTrace()->is_captured());
-  const bool should_restore_closure_context =
-      CurrentException()->is_captured() || CurrentCatchContext()->is_captured();
+  LocalVariable* exception_var = CurrentException();
+  LocalVariable* stacktrace_var = CurrentStackTrace();
+  LocalVariable* raw_exception_var = CurrentRawException();
+  LocalVariable* raw_stacktrace_var = CurrentRawStackTrace();
+
   CatchBlockEntryInstr* entry = new (Z) CatchBlockEntryInstr(
       TokenPosition::kNoSource,  // Token position of catch block.
       is_synthesized,  // whether catch block was synthesized by FE compiler
       AllocateBlockId(), CurrentTryIndex(), graph_entry_, handler_types,
-      handler_index, *CurrentException(), *CurrentStackTrace(),
-      needs_stacktrace, GetNextDeoptId(), should_restore_closure_context);
+      handler_index, *exception_var, *stacktrace_var, needs_stacktrace,
+      GetNextDeoptId(), raw_exception_var, raw_stacktrace_var);
   graph_entry_->AddCatchEntry(entry);
+
   Fragment instructions(entry);
+
+  // Auxiliary variables introduced by the try catch can be captured if we are
+  // inside a function with yield/resume points. In this case we first need
+  // to restore the context to match the context at entry into the closure.
+  const bool should_restore_closure_context =
+      CurrentException()->is_captured() || CurrentCatchContext()->is_captured();
+  LocalVariable* context_variable = parsed_function_->current_context_var();
+  if (should_restore_closure_context) {
+    ASSERT(parsed_function_->function().IsClosureFunction());
+    LocalScope* scope = parsed_function_->node_sequence()->scope();
+
+    LocalVariable* closure_parameter = scope->VariableAt(0);
+    ASSERT(!closure_parameter->is_captured());
+    instructions += LoadLocal(closure_parameter);
+    instructions += LoadField(Closure::context_offset());
+    instructions += StoreLocal(TokenPosition::kNoSource, context_variable);
+    instructions += Drop();
+  }
+
+  if (exception_var->is_captured()) {
+    instructions += LoadLocal(context_variable);
+    instructions += LoadLocal(raw_exception_var);
+    instructions +=
+        StoreInstanceField(TokenPosition::kNoSource,
+                           Context::variable_offset(exception_var->index()));
+  }
+  if (stacktrace_var->is_captured()) {
+    instructions += LoadLocal(context_variable);
+    instructions += LoadLocal(raw_stacktrace_var);
+    instructions +=
+        StoreInstanceField(TokenPosition::kNoSource,
+                           Context::variable_offset(stacktrace_var->index()));
+  }
 
   // :saved_try_context_var can be captured in the context of
   // of the closure, in this case CatchBlockEntryInstr restores
@@ -1383,6 +1418,28 @@ Fragment BaseFlowGraphBuilder::TestDelayedTypeArgs(LocalVariable* closure,
   present += Goto(join);
 
   return Fragment(test.entry, join);
+}
+
+Fragment BaseFlowGraphBuilder::TestAnyTypeArgs(Fragment present,
+                                               Fragment absent) {
+  if (parsed_function_->function().IsClosureFunction()) {
+    LocalVariable* closure =
+        parsed_function_->node_sequence()->scope()->VariableAt(0);
+
+    JoinEntryInstr* complete = BuildJoinEntry();
+    JoinEntryInstr* present_entry = BuildJoinEntry();
+
+    Fragment test = TestTypeArgsLen(
+        TestDelayedTypeArgs(closure, Goto(present_entry), absent),
+        Goto(present_entry), 0);
+    test += Goto(complete);
+
+    Fragment(present_entry) + present + Goto(complete);
+
+    return Fragment(test.entry, complete);
+  } else {
+    return TestTypeArgsLen(absent, present, 0);
+  }
 }
 
 Fragment FlowGraphBuilder::RethrowException(TokenPosition position,
@@ -1983,6 +2040,12 @@ Fragment BaseFlowGraphBuilder::DropTempsPreserveTop(
   return Fragment(drop_temps);
 }
 
+Fragment BaseFlowGraphBuilder::MakeTemp() {
+  MakeTempInstr* make_temp = new (Z) MakeTempInstr(Z);
+  Push(make_temp);
+  return Fragment(make_temp);
+}
+
 void FlowGraphBuilder::InlineBailout(const char* reason) {
   bool is_inlining = exit_collector_ != NULL;
   if (is_inlining) {
@@ -2072,6 +2135,71 @@ Fragment FlowGraphBuilder::NativeFunctionBody(intptr_t first_positional_offset,
                               Array::length_offset(),
                               Type::ZoneHandle(Z, Type::SmiType()), kSmiCid);
       break;
+    case MethodRecognizer::kListFactory: {
+      // factory List<E>([int length]) {
+      //   return (:arg_desc.positional_count == 2) ? new _List<E>(length)
+      //                                            : new _GrowableList<E>(0);
+      // }
+      const Library& core_lib = Library::Handle(Z, Library::CoreLibrary());
+
+      TargetEntryInstr *allocate_non_growable, *allocate_growable;
+
+      body += LoadArgDescriptor();
+      body +=
+          LoadField(ArgumentsDescriptor::positional_count_offset(), kSmiCid);
+      body += IntConstant(2);
+      body += BranchIfStrictEqual(&allocate_non_growable, &allocate_growable);
+
+      JoinEntryInstr* join = BuildJoinEntry();
+
+      {
+        const Class& cls = Class::Handle(
+            Z, core_lib.LookupClass(
+                   Library::PrivateCoreLibName(Symbols::_List())));
+        ASSERT(!cls.IsNull());
+        const Function& func = Function::ZoneHandle(
+            Z, cls.LookupFactoryAllowPrivate(Symbols::_ListFactory()));
+        ASSERT(!func.IsNull());
+
+        Fragment allocate(allocate_non_growable);
+        allocate += LoadLocal(scopes_->type_arguments_variable);
+        allocate += PushArgument();
+        allocate += LoadLocal(LookupVariable(first_positional_offset));
+        allocate += PushArgument();
+        allocate +=
+            StaticCall(TokenPosition::kNoSource, func, 2, ICData::kStatic);
+        allocate += StoreLocal(TokenPosition::kNoSource,
+                               parsed_function_->expression_temp_var());
+        allocate += Drop();
+        allocate += Goto(join);
+      }
+
+      {
+        const Class& cls = Class::Handle(
+            Z, core_lib.LookupClass(
+                   Library::PrivateCoreLibName(Symbols::_GrowableList())));
+        ASSERT(!cls.IsNull());
+        const Function& func = Function::ZoneHandle(
+            Z, cls.LookupFactoryAllowPrivate(Symbols::_GrowableListFactory()));
+        ASSERT(!func.IsNull());
+
+        Fragment allocate(allocate_growable);
+        allocate += LoadLocal(scopes_->type_arguments_variable);
+        allocate += PushArgument();
+        allocate += IntConstant(0);
+        allocate += PushArgument();
+        allocate +=
+            StaticCall(TokenPosition::kNoSource, func, 2, ICData::kStatic);
+        allocate += StoreLocal(TokenPosition::kNoSource,
+                               parsed_function_->expression_temp_var());
+        allocate += Drop();
+        allocate += Goto(join);
+      }
+
+      body = Fragment(body.entry, join);
+      body += LoadLocal(parsed_function_->expression_temp_var());
+      break;
+    }
     case MethodRecognizer::kObjectArrayAllocate:
       body += LoadLocal(scopes_->type_arguments_variable);
       body += LoadLocal(LookupVariable(first_positional_offset));
@@ -2713,8 +2841,9 @@ RawObject* EvaluateMetadata(const Field& metadata_field) {
         &helper, Script::Handle(Z, metadata_field.Script()), Z,
         TypedData::Handle(Z, metadata_field.KernelData()),
         metadata_field.KernelDataProgramOffset());
+    const Class& owner_class = Class::Handle(Z, metadata_field.Owner());
     return streaming_flow_graph_builder.EvaluateMetadata(
-        metadata_field.kernel_offset());
+        metadata_field.kernel_offset(), owner_class);
   } else {
     Thread* thread = Thread::Current();
     Error& error = Error::Handle();

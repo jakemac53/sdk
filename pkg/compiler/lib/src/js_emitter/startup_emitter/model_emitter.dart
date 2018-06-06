@@ -31,7 +31,6 @@ import '../../common.dart';
 import '../../compiler.dart' show Compiler;
 import '../../constants/values.dart' show ConstantValue, FunctionConstantValue;
 import '../../common_elements.dart' show CommonElements;
-import '../../elements/elements.dart' show ClassElement;
 import '../../elements/entities.dart';
 import '../../hash/sha1.dart' show Hasher;
 import '../../io/code_output.dart';
@@ -58,7 +57,7 @@ class ModelEmitter {
   ConstantEmitter constantEmitter;
   final NativeEmitter nativeEmitter;
   final bool shouldGenerateSourceMap;
-  final ClosedWorld _closedWorld;
+  final JClosedWorld _closedWorld;
   final ConstantOrdering _constantOrdering;
 
   // The full code that is written to each hunk part-file.

@@ -558,7 +558,9 @@ class Object {
 
   // Initialize a new isolate either from a Kernel IR, from source, or from a
   // snapshot.
-  static RawError* Init(Isolate* isolate, kernel::Program* program);
+  static RawError* Init(Isolate* isolate,
+                        const uint8_t* kernel_buffer,
+                        intptr_t kernel_buffer_size);
 
   static void MakeUnusedSpaceTraversable(const Object& obj,
                                          intptr_t original_size,
@@ -1309,6 +1311,17 @@ class Class : public Object {
   }
   void set_is_mixin_type_applied() const;
 
+  // Tests if this is a mixin application class which was desugared
+  // to a normal class by kernel mixin transformation
+  // (pkg/kernel/lib/transformations/mixin_full_resolution.dart).
+  //
+  // In such case, its mixed-in type was pulled into the end of
+  // interfaces list.
+  bool is_transformed_mixin_application() const {
+    return TransformedMixinApplicationBit::decode(raw_ptr()->state_bits_);
+  }
+  void set_is_transformed_mixin_application() const;
+
   bool is_fields_marked_nullable() const {
     return FieldsMarkedNullableBit::decode(raw_ptr()->state_bits_);
   }
@@ -1363,14 +1376,19 @@ class Class : public Object {
   // Return true on success, or false and error otherwise.
   bool ApplyPatch(const Class& patch, Error* error) const;
 
-  // Evaluate the given expression as if it appeared in a static
-  // method of this class and return the resulting value, or an
-  // error object if evaluating the expression fails. The method has
-  // the formal parameters given in param_names, and is invoked with
-  // the argument values given in param_values.
+  // Evaluate the given expression as if it appeared in a static method of this
+  // class and return the resulting value, or an error object if evaluating the
+  // expression fails. The method has the formal (type) parameters given in
+  // (type_)param_names, and is invoked with the (type)argument values given in
+  // (type_)param_values.
   RawObject* Evaluate(const String& expr,
                       const Array& param_names,
                       const Array& param_values) const;
+  RawObject* Evaluate(const String& expr,
+                      const Array& param_names,
+                      const Array& param_values,
+                      const Array& type_param_names,
+                      const TypeArguments& type_param_values) const;
 
   RawError* EnsureIsFinalized(Thread* thread) const;
 
@@ -1463,6 +1481,7 @@ class Class : public Object {
     kFieldsMarkedNullableBit = 11,
     kCycleFreeBit = 12,
     kEnumBit = 13,
+    kTransformedMixinApplicationBit = 14,
     kIsAllocatedBit = 15,
   };
   class ConstBit : public BitField<uint16_t, bool, kConstBit, 1> {};
@@ -1487,6 +1506,8 @@ class Class : public Object {
       : public BitField<uint16_t, bool, kFieldsMarkedNullableBit, 1> {};
   class CycleFreeBit : public BitField<uint16_t, bool, kCycleFreeBit, 1> {};
   class EnumBit : public BitField<uint16_t, bool, kEnumBit, 1> {};
+  class TransformedMixinApplicationBit
+      : public BitField<uint16_t, bool, kTransformedMixinApplicationBit, 1> {};
   class IsAllocatedBit : public BitField<uint16_t, bool, kIsAllocatedBit, 1> {};
 
   void set_name(const String& value) const;
@@ -2136,6 +2157,7 @@ class Function : public Object {
   void ZeroEdgeCounters() const;
 
   RawClass* Owner() const;
+  void set_owner(const Object& value) const;
   RawClass* origin() const;
   RawScript* script() const;
   RawObject* RawOwner() const { return raw_ptr()->owner_; }
@@ -2504,6 +2526,10 @@ class Function : public Object {
     set_optimized_call_site_count(value);
   }
 
+  void SetKernelDataAndScript(const Script& script,
+                              const TypedData& data,
+                              intptr_t offset);
+
   intptr_t KernelDataProgramOffset() const;
 
   RawTypedData* KernelData() const;
@@ -2776,28 +2802,37 @@ class Function : public Object {
 
   void set_modifier(RawFunction::AsyncModifier value) const;
 
+// 'WasCompiled' is true if the function was compiled once in this
+// VM instantiation. It is independent from presence of type feedback
+// (ic_data_array) and code, which may be loaded from a snapshot.
+// 'WasExecuted' is true if the usage counter has ever been positive.
+// 'ProhibitsHoistingCheckClass' is true if this function deoptimized before on
+// a hoisted check class instruction.
+// 'ProhibitsBoundsCheckGeneralization' is true if this function deoptimized
+// before on a generalized bounds check.
+#define STATE_BITS_LIST(V)                                                     \
+  V(WasCompiled)                                                               \
+  V(WasExecutedBit)                                                            \
+  V(ProhibitsHoistingCheckClass)                                               \
+  V(ProhibitsBoundsCheckGeneralization)
+
   enum StateBits {
-    kWasCompiledPos = 0,
-    kWasExecutedPos = 1,
+#define DECLARE_FLAG_POS(Name) k##Name##Pos,
+    STATE_BITS_LIST(DECLARE_FLAG_POS)
+#undef DECLARE_FLAG_POS
   };
-  class WasCompiledBit : public BitField<uint8_t, bool, kWasCompiledPos, 1> {};
-  class WasExecutedBit : public BitField<uint8_t, bool, kWasExecutedPos, 1> {};
+#define DEFINE_FLAG_BIT(Name)                                                  \
+  class Name##Bit : public BitField<uint8_t, bool, k##Name##Pos, 1> {};
+  STATE_BITS_LIST(DEFINE_FLAG_BIT)
+#undef DEFINE_FLAG_BIT
 
-  // 'WasCompiled' is true if the function was compiled once in this
-  // VM instantiation. It is independent from presence of type feedback
-  // (ic_data_array) and code, which may be loaded from a snapshot.
-  void SetWasCompiled(bool value) const {
-    set_state_bits(WasCompiledBit::update(value, state_bits()));
-  }
-  bool WasCompiled() const { return WasCompiledBit::decode(state_bits()); }
-
-  // 'WasExecuted' is true if the usage counter has ever been positive.
-  void SetWasExecuted(bool value) const {
-    set_state_bits(WasExecutedBit::update(value, state_bits()));
-  }
-  bool WasExecuted() const {
-    return (usage_counter() > 0) || WasExecutedBit::decode(state_bits());
-  }
+#define DEFINE_FLAG_ACCESSORS(Name)                                            \
+  void Set##Name(bool value) const {                                           \
+    set_state_bits(Name##Bit::update(value, state_bits()));                    \
+  }                                                                            \
+  bool Name() const { return Name##Bit::decode(state_bits()); }
+  STATE_BITS_LIST(DEFINE_FLAG_ACCESSORS)
+#undef DEFINE_FLAG_ACCESSORS
 
   void SetUsageCounter(intptr_t value) const {
     if (usage_counter() > 0) {
@@ -2805,6 +2840,10 @@ class Function : public Object {
     }
     set_usage_counter(value);
   }
+
+  bool WasExecuted() const { return (usage_counter() > 0) || WasExecutedBit(); }
+
+  void SetWasExecuted(bool value) const { SetWasExecutedBit(value); }
 
   // static: Considered during class-side or top-level resolution rather than
   //         instance-side resolution.
@@ -2843,11 +2882,10 @@ class Function : public Object {
   V(Native, is_native)                                                         \
   V(Redirecting, is_redirecting)                                               \
   V(External, is_external)                                                     \
-  V(AllowsHoistingCheckClass, allows_hoisting_check_class)                     \
-  V(AllowsBoundsCheckGeneralization, allows_bounds_check_generalization)       \
   V(GeneratedBody, is_generated_body)                                          \
   V(AlwaysInline, always_inline)                                               \
-  V(PolymorphicTarget, is_polymorphic_target)
+  V(PolymorphicTarget, is_polymorphic_target)                                  \
+  V(HasPragma, has_pragma)
 
 #define DEFINE_ACCESSORS(name, accessor_name)                                  \
   void set_##accessor_name(bool value) const {                                 \
@@ -2856,6 +2894,18 @@ class Function : public Object {
   bool accessor_name() const { return name##Bit::decode(raw_ptr()->kind_tag_); }
   FOR_EACH_FUNCTION_KIND_BIT(DEFINE_ACCESSORS)
 #undef DEFINE_ACCESSORS
+
+  // Indicates whether this function can be optimized on the background compiler
+  // thread.
+  bool is_background_optimizable() const {
+    return RawFunction::BackgroundOptimizableBit::decode(
+        raw_ptr()->packed_fields_);
+  }
+
+  void set_is_background_optimizable(bool value) const {
+    set_packed_fields(RawFunction::BackgroundOptimizableBit::update(
+        value, raw_ptr()->packed_fields_));
+  }
 
  private:
   void set_ic_data_array(const Array& value) const;
@@ -2904,7 +2954,6 @@ class Function : public Object {
   void set_name(const String& value) const;
   void set_kind(RawFunction::Kind value) const;
   void set_parent_function(const Function& value) const;
-  void set_owner(const Object& value) const;
   RawFunction* implicit_closure_function() const;
   void set_implicit_closure_function(const Function& value) const;
   RawInstance* implicit_static_closure() const;
@@ -3695,14 +3744,20 @@ class Library : public Object {
 
   static RawLibrary* New(const String& url);
 
-  // Evaluate the given expression as if it appeared in an top-level
-  // method of this library and return the resulting value, or an
-  // error object if evaluating the expression fails. The method has
-  // the formal parameters given in param_names, and is invoked with
-  // the argument values given in param_values.
+  // Evaluate the given expression as if it appeared in an top-level method of
+  // this library and return the resulting value, or an error object if
+  // evaluating the expression fails. The method has the formal (type)
+  // parameters given in (type_)param_names, and is invoked with the (type)
+  // argument values given in (type_)param_values.
   RawObject* Evaluate(const String& expr,
                       const Array& param_names,
                       const Array& param_values) const;
+
+  RawObject* Evaluate(const String& expr,
+                      const Array& param_names,
+                      const Array& param_values,
+                      const Array& type_param_names,
+                      const TypeArguments& type_arguments) const;
 
   // Library scope name dictionary.
   //
@@ -5487,7 +5542,7 @@ class Instance : public Object {
   virtual bool OperatorEquals(const Instance& other) const;
   bool IsIdenticalTo(const Instance& other) const;
   virtual bool CanonicalizeEquals(const Instance& other) const;
-  virtual uword ComputeCanonicalTableHash() const;
+  virtual uint32_t CanonicalizeHash() const;
 
   intptr_t SizeFromClass() const {
 #if defined(DEBUG)
@@ -5561,15 +5616,22 @@ class Instance : public Object {
   // (if not NULL) to call.
   bool IsCallable(Function* function) const;
 
-  // Evaluate the given expression as if it appeared in an instance
-  // method of this instance and return the resulting value, or an
-  // error object if evaluating the expression fails. The method has
-  // the formal parameters given in param_names, and is invoked with
-  // the argument values given in param_values.
+  // Evaluate the given expression as if it appeared in an instance method of
+  // this instance and return the resulting value, or an error object if
+  // evaluating the expression fails. The method has the formal (type)
+  // parameters given in (type_)param_names, and is invoked with the (type)
+  // argument values given in (type_)param_values.
   RawObject* Evaluate(const Class& method_cls,
                       const String& expr,
                       const Array& param_names,
                       const Array& param_values) const;
+
+  RawObject* Evaluate(const Class& method_cls,
+                      const String& expr,
+                      const Array& param_names,
+                      const Array& param_values,
+                      const Array& type_param_names,
+                      const TypeArguments& type_param_values) const;
 
   // Equivalent to invoking hashCode on this instance.
   virtual RawObject* HashCode() const;
@@ -5878,6 +5940,10 @@ class TypeArguments : public Instance {
                                  (len * kBytesPerElement));
   }
 
+  virtual uint32_t CanonicalizeHash() const {
+    // Hash() is not stable until finalization is done.
+    return 0;
+  }
   intptr_t Hash() const;
 
   static RawTypeArguments* New(intptr_t len, Heap::Space space = Heap::kOld);
@@ -5957,6 +6023,7 @@ class AbstractType : public Instance {
   virtual bool CanonicalizeEquals(const Instance& other) const {
     return Equals(other);
   }
+  virtual uint32_t CanonicalizeHash() const { return Hash(); }
   virtual bool Equals(const Instance& other) const {
     return IsEquivalent(other);
   }
@@ -6733,10 +6800,7 @@ class Integer : public Number {
   virtual bool CanonicalizeEquals(const Instance& other) const {
     return Equals(other);
   }
-  virtual uword ComputeCanonicalTableHash() const {
-    UNREACHABLE();
-    return 0;
-  }
+  virtual uint32_t CanonicalizeHash() const { return AsTruncatedUint32Value(); }
   virtual bool Equals(const Instance& other) const;
 
   virtual RawObject* HashCode() const { return raw(); }
@@ -7013,10 +7077,7 @@ class Double : public Number {
   bool BitwiseEqualsToDouble(double value) const;
   virtual bool OperatorEquals(const Instance& other) const;
   virtual bool CanonicalizeEquals(const Instance& other) const;
-  virtual uword ComputeCanonicalTableHash() const {
-    UNREACHABLE();
-    return 0;
-  }
+  virtual uint32_t CanonicalizeHash() const;
 
   static RawDouble* New(double d, Heap::Space space = Heap::kNew);
 
@@ -7166,10 +7227,7 @@ class String : public Instance {
   virtual bool CanonicalizeEquals(const Instance& other) const {
     return Equals(other);
   }
-  virtual uword ComputeCanonicalTableHash() const {
-    UNREACHABLE();
-    return 0;
-  }
+  virtual uint32_t CanonicalizeHash() const { return Hash(); }
   virtual bool Equals(const Instance& other) const;
 
   intptr_t CompareTo(const String& other) const;
@@ -7844,6 +7902,10 @@ class Bool : public Instance {
     return value ? Bool::True() : Bool::False();
   }
 
+  virtual uint32_t CanonicalizeHash() const {
+    return raw() == True().raw() ? 1231 : 1237;
+  }
+
  private:
   void set_value(bool value) const {
     StoreNonPointer(&raw_ptr()->value_, value);
@@ -7900,7 +7962,7 @@ class Array : public Instance {
   }
 
   virtual bool CanonicalizeEquals(const Instance& other) const;
-  virtual uword ComputeCanonicalTableHash() const;
+  virtual uint32_t CanonicalizeHash() const;
 
   static const intptr_t kBytesPerElement = kWordSize;
   static const intptr_t kMaxElements = kSmiMax / kBytesPerElement;
@@ -8073,10 +8135,6 @@ class GrowableObjectArray : public Instance {
   virtual bool CanonicalizeEquals(const Instance& other) const {
     UNREACHABLE();
     return false;
-  }
-  virtual uword ComputeCanonicalTableHash() const {
-    UNREACHABLE();
-    return 0;
   }
 
   // We don't expect a growable object array to be canonicalized.
@@ -8253,7 +8311,7 @@ class TypedData : public Instance {
   }
 
   virtual bool CanonicalizeEquals(const Instance& other) const;
-  virtual uword ComputeCanonicalTableHash() const;
+  virtual uint32_t CanonicalizeHash() const;
 
 #define TYPED_GETTER_SETTER(name, type)                                        \
   type Get##name(intptr_t byte_offset) const {                                 \
@@ -8778,7 +8836,9 @@ class Closure : public Instance {
     // None of the fields of a closure are instances.
     return true;
   }
-
+  virtual uint32_t CanonicalizeHash() const {
+    return Function::Handle(function()).Hash();
+  }
   int64_t ComputeHash() const;
 
   static RawClosure* New(const TypeArguments& instantiator_type_arguments,

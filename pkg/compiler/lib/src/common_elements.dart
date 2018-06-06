@@ -7,6 +7,7 @@ library dart2js.type_system;
 
 import 'common.dart';
 import 'common/names.dart' show Identifiers, Uris;
+import 'constants/expressions.dart' show ConstantExpression;
 import 'constants/values.dart';
 import 'elements/entities.dart';
 import 'elements/names.dart' show PublicName;
@@ -14,12 +15,10 @@ import 'elements/types.dart';
 import 'js_backend/backend.dart' show JavaScriptBackend;
 import 'js_backend/constant_system_javascript.dart';
 import 'js_backend/native_data.dart' show NativeBasicData;
-import 'constants/expressions.dart' show ConstantExpression;
+import 'types/abstract_value_domain.dart';
 import 'universe/call_structure.dart' show CallStructure;
 import 'universe/selector.dart' show Selector;
 import 'universe/call_structure.dart';
-import 'universe/world_builder.dart';
-import 'world.dart';
 
 /// The common elements and types in Dart.
 class CommonElements {
@@ -136,10 +135,6 @@ class CommonElements {
   LibraryEntity _foreignLibrary;
   LibraryEntity get foreignLibrary =>
       _foreignLibrary ??= _env.lookupLibrary(Uris.dart__foreign_helper);
-
-  LibraryEntity _isolateHelperLibrary;
-  LibraryEntity get isolateHelperLibrary =>
-      _isolateHelperLibrary ??= _env.lookupLibrary(Uris.dart__isolate_helper);
 
   /// Reference to the internal library to lookup functions to always inline.
   LibraryEntity _internalLibrary;
@@ -599,19 +594,6 @@ class CommonElements {
       _asyncStarStreamControllerFactory ??=
           _findAsyncHelperFunction('_makeAsyncStarStreamController');
 
-  // From dart:mirrors
-  FunctionEntity _findMirrorsFunction(String name) {
-    LibraryEntity library = _env.lookupLibrary(Uris.dart__js_mirrors);
-    if (library == null) return null;
-    return _env.lookupLibraryMember(library, name, required: true);
-  }
-
-  /// Holds the method "disableTreeShaking" in js_mirrors when
-  /// dart:mirrors has been loaded.
-  FunctionEntity _disableTreeShakingMarker;
-  FunctionEntity get disableTreeShakingMarker =>
-      _disableTreeShakingMarker ??= _findMirrorsFunction('disableTreeShaking');
-
   /// Holds the method "preserveNames" in js_mirrors when
   /// dart:mirrors has been loaded.
   FunctionEntity _preserveNamesMarker;
@@ -624,19 +606,6 @@ class CommonElements {
     }
     return _preserveNamesMarker;
   }
-
-  /// Holds the method "preserveMetadata" in js_mirrors when
-  /// dart:mirrors has been loaded.
-  FunctionEntity _preserveMetadataMarker;
-  FunctionEntity get preserveMetadataMarker =>
-      _preserveMetadataMarker ??= _findMirrorsFunction('preserveMetadata');
-
-  /// Holds the method "preserveLibraryNames" in js_mirrors when
-  /// dart:mirrors has been loaded.
-  FunctionEntity _preserveLibraryNamesMarker;
-  FunctionEntity get preserveLibraryNamesMarker =>
-      _preserveLibraryNamesMarker ??=
-          _findMirrorsFunction('preserveLibraryNames');
 
   // From dart:_interceptors
   ClassEntity _findInterceptorsClass(String name) =>
@@ -778,8 +747,8 @@ class CommonElements {
   /// in the given [world].
   ///
   /// Returns `false` if `JSString.split` is not available.
-  bool appliesToJsStringSplit(
-      Selector selector, ReceiverConstraint receiver, World world) {
+  bool appliesToJsStringSplit(Selector selector, AbstractValue receiver,
+      AbstractValueDomain abstractValueDomain) {
     if (_jsStringSplit == null) {
       ClassEntity cls =
           _findClass(interceptorsLibrary, 'JSString', required: false);
@@ -788,7 +757,8 @@ class CommonElements {
       if (_jsStringSplit == null) return false;
     }
     return selector.applies(_jsStringSplit) &&
-        (receiver == null || receiver.canHit(jsStringSplit, selector, world));
+        (receiver == null ||
+            abstractValueDomain.canHit(receiver, jsStringSplit, selector));
   }
 
   FunctionEntity _jsStringSplit;
@@ -1148,6 +1118,9 @@ class CommonElements {
   FunctionEntity get instantiatedGenericFunctionType =>
       _findHelperFunction('instantiatedGenericFunctionType');
 
+  FunctionEntity get extractFunctionTypeObjectFromInternal =>
+      _findHelperFunction('extractFunctionTypeObjectFromInternal');
+
   // From dart:_internal
 
   ClassEntity _symbolImplementationClass;
@@ -1442,8 +1415,6 @@ abstract class ElementEnvironment {
       ClassEntity cls, List<DartType> typeArguments);
 
   /// Returns the `dynamic` type.
-  // TODO(johnniwinther): Remove this when `ResolutionDynamicType` is no longer
-  // needed.
   DartType get dynamicType;
 
   /// Returns the 'raw type' of [cls]. That is, the instantiation of [cls]
@@ -1529,18 +1500,9 @@ abstract class ElementEnvironment {
   /// Returns the metadata constants declared on [cls].
   Iterable<ConstantValue> getClassMetadata(ClassEntity cls);
 
-  /// Returns the metadata constants declared on [typedef].
-  Iterable<ConstantValue> getTypedefMetadata(TypedefEntity typedef);
-
   /// Returns the metadata constants declared on [member].
   Iterable<ConstantValue> getMemberMetadata(MemberEntity member,
       {bool includeParameterMetadata: false});
-
-  /// Returns the function type that is an alias of a [typedef].
-  FunctionType getFunctionTypeOfTypedef(TypedefEntity typedef);
-
-  /// Returns the typedef type that is declared by a [typedef].
-  TypedefType getTypedefTypeOfTypedef(TypedefEntity typedef);
 
   /// Returns `true` if [cls] is a Dart enum class.
   bool isEnumClass(ClassEntity cls);

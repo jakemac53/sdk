@@ -2,15 +2,121 @@
 (Add new changes here, and they will be copied to the
  change section for the next dev version)
 
+### Language
+
+#### Strong Mode
+
+### Core library changes
+
+* `dart:convert`
+  * Allow `utf8.decoder.fuse(json.decoder)` to ignore leading Unicode BOM.
+
+### Dart VM
+
 ### Tool Changes
 
-#### dart2js
+#### Analyzer
 
-* Several fixes to improve support for running output of dart2js as a webworker.
+* New static checking of duplicate shown or hidden names in an export directive
+  ([issue 33182]).
 
-* `dart:isolate` implementation removed. To launch background tasks,
-   please use webworkers instead. APIs for webworkers can be accessed from
-   `dart:html` or JS-interop.
+[issue 33182]: https://github.com/dart-lang/sdk/issues/33182
+
+#### Pub
+
+#### Other Tools
+
+## 2.0.0-dev.59.0
+
+### Language
+
+The change to make bounds on generic functions invariant has landed in the
+analyzer.  The analyzer will now issue an invalid override error on the
+following program ([issue 29014][sdk#29014]).
+
+```dart
+class A {
+  void f<T extends int>() {}
+}
+
+class B extends A {
+  @override
+  void f<T extends num>() {}
+}
+```
+
+[sdk#29014]: https://github.com/dart-lang/sdk/issues/29014
+
+## 2.0.0-dev.58.0
+
+## 2.0.0-dev.57.0
+
+* Support Javascript Promise APIs as a Dart Future.  In Javascript a Promise has two
+  callbacks one for success and one for failure.  For success the Future returns the
+  value e.g.,
+
+BackgroundFetchManager.get is exposed as:
+
+```dart
+  Future<BackgroundFetchRegistration> get(String id)
+```
+
+usage could be:
+
+   BackgroundFetchRegistration result = await fetchMgr.get('abc');
+
+  The underlying JS Promise to Future mechanism will be exposed as a public API in a future checkin.
+
+## 2.0.0-dev.56.0
+
+### Language
+
+* Invocations of noSuchMethod receive default values for optional args.
+  * The following program used to print "No arguments passed", and now prints
+    "First argument is 3".
+
+```dart
+abstract class B {
+  void m([int x = 3]);
+}
+
+class A implements B {
+  noSuchMethod(Invocation i) {
+    if (i.positionalArguments.length == 0) {
+      print("No arguments passed");
+    } else {
+      print("First argument is ${i.positionalArguments[0]}");
+    }
+  }
+}
+
+void main() {
+  A().m();
+}
+```
+
+### Core library changes
+
+* `dart:core`
+  * Deprecated the `NoSuchMethodError` constructor.
+
+* `dart:mirrors`
+  * Marked `MirrorsUsed` as deprecated. The mirrors library is no longer
+    supported by dart2js, and `MirrorsUsed` only affected dart2js.
+
+* `dart:io`
+  * Added `X509Certificate.der`, `X509Certificate.pem`, and
+    `X509Certificate.sha1`.
+  * Added `FileSystemEntity.fromRawPath` constructor to allow for
+    the creation of `FileSystemEntity` using `Uint8List` buffers.
+
+### Tool Changes
+
+#### dartfmt
+
+  * Support metadata annotations on enum cases.
+
+## 2.0.0-dev.55.0
 
 ### Language
 
@@ -22,19 +128,19 @@
   * `Iterable`
   * `Map`
 
-#### Strong Mode
-
-### Core library changes
-
-### Dart VM
-
 ### Tool Changes
+
+#### dart2js
+
+* Several fixes to improve support for running output of dart2js as a webworker.
+
+* `dart:isolate` implementation removed. To launch background tasks,
+  please use webworkers instead. APIs for webworkers can be accessed from
+  `dart:html` or JS-interop.
 
 #### Pub
 
 * Use forward-slash paths to Git on Windows
-
-#### Other Tools
 
 ## 2.0.0-dev.54.0
 
@@ -486,6 +592,10 @@ Still need entries for all changes to dart:js since 1.x
 
   * Renamed `E`, `LN10`, `LN`, `LOG2E`, `LOG10E`, `PI`, `SQRT1_2` and `SQRT2`
     to `e`, `ln10`, `ln`, `log2e`, `log10e`, `pi`, `sqrt1_2` and `sqrt2`.
+
+* `dart.mirrors`
+  * Added `IsolateMirror.loadUri`, which allows dynamically loading additional
+    code.
 
 <!--
 Still need entries for all changes to dart:svg since 1.x

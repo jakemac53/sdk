@@ -47,27 +47,23 @@ vars = {
   # Scripts that make 'git cl format' work.
   "clang_format_scripts_rev": "c09c8deeac31f05bd801995c475e7c8070f9ecda",
 
-  "gperftools_revision": "02eeed29df112728564a5dde6417fa4622b57a06",
+  "gperftools_revision": "9608fa3bcf8020d35f59fbf70cd3cbe4b015b972",
 
   # Revisions of /third_party/* dependencies.
   "args_tag": "1.4.1",
-  "async_tag": "2.0.6",
-  "barback-0.13.0_rev": "34853",
-  "barback-0.14.0_rev": "36398",
-  "barback-0.14.1_rev": "38525",
-  "barback_tag" : "0.15.2+14",
+  "async_tag": "2.0.7",
   "bazel_worker_tag": "v0.1.9",
   "boolean_selector_tag" : "1.0.3",
-  "boringssl_gen_rev": "344f455fd13d46f054726638e76026156ea73aa9",
-  "boringssl_rev" : "672f6fc2486745d0cabc3aaeb4e0a3cd13b37b12",
+  "boringssl_gen_rev": "fc47eaa1a245d858bae462cd64d4155605b850ea",
+  "boringssl_rev" : "189270cd190267f5bd60cfe8f8ce7a61d07ba6f4",
   "charcode_tag": "v1.1.1",
   "chrome_rev" : "19997",
   "cli_util_tag" : "0.1.2+1",
-  "collection_tag": "1.14.6",
+  "collection_tag": "1.14.9",
   "convert_tag": "2.0.1",
   "crypto_tag" : "2.0.2+1",
   "csslib_tag" : "0.14.1",
-  "dart2js_info_tag" : "0.5.6+2",
+  "dart2js_info_tag" : "0.5.6+4",
 
   # Note: updates to dart_style have to be coordinated carefully with
   # the infrastructure-team so that the internal formatter in
@@ -81,9 +77,9 @@ vars = {
   #     minutes later.
   #
   # For more details, see https://github.com/dart-lang/sdk/issues/30164
-  "dart_style_tag": "1.0.12",  # Please see the note above before updating.
+  "dart_style_tag": "1.0.14",  # Please see the note above before updating.
 
-  "dartdoc_tag" : "v0.19.0",
+  "dartdoc_tag" : "v0.20.0",
   "fixnum_tag": "0.10.5",
   "func_rev": "25eec48146a58967d75330075ab376b3838b18a8",
   "glob_tag": "1.1.5",
@@ -93,18 +89,18 @@ vars = {
   "http_parser_tag" : "3.1.1",
   "http_retry_tag": "0.1.1",
   "http_tag" : "0.11.3+16",
-  "http_throttle_tag" : "1.0.1",
+  "http_throttle_tag" : "1.0.2",
   "idl_parser_rev": "5fb1ebf49d235b5a70c9f49047e83b0654031eb7",
   "intl_tag": "0.15.2",
   "jinja2_rev": "2222b31554f03e62600cd7e383376a7c187967a1",
   "json_rpc_2_tag": "2.0.6",
-  "linter_tag": "0.1.50",
+  "linter_tag": "0.1.51",
   "logging_tag": "0.11.3+1",
-  "markdown_tag": "1.1.1",
+  "markdown_tag": "2.0.0",
   "matcher_tag": "0.12.1+4",
   "mime_tag": "0.9.6",
-  "mockito_tag": "a92db054fba18bc2d605be7670aee74b7cadc00a",
-  "mustache4dart_tag" : "v2.1.1",
+  "mockito_tag": "d39ac507483b9891165e422ec98d9fb480037c8b",
+  "mustache4dart_tag" : "v2.1.2",
   "oauth2_tag": "1.1.0",
   "observatory_pub_packages_rev": "d3a3aebefbd35aa30fe7bbc2889b772b398f7d7f",
   "package_config_tag": "1.0.3",
@@ -114,7 +110,7 @@ vars = {
   "ply_rev": "604b32590ffad5cbb82e4afef1d305512d06ae93",
   "pool_tag": "1.3.4",
   "protobuf_tag": "0.7.1",
-  "pub_rev": "0c172864be2d2043a9d630e07f6b4eae7472653f",
+  "pub_rev": "7bdcf4e4de85a7a8c7a322511b8198f1b6cb0a73",
   "pub_semver_tag": "1.4.1",
   "quiver_tag": "5aaa3f58c48608af5b027444d561270b53f15dbf",
   "resource_rev":"af5a5bf65511943398146cf146e466e5f0b95cb9",
@@ -135,12 +131,12 @@ vars = {
   "test_process_tag": "1.0.1",
   "term_glyph_tag": "1.0.0",
   "test_reflective_loader_tag": "0.1.4",
-  "test_tag": "0.12.30+1",
+  "test_tag": "0.12.38",
   "tuple_tag": "v1.0.1",
   "typed_data_tag": "1.1.3",
   "usage_tag": "3.3.0",
   "utf_tag": "0.9.0+4",
-  "watcher_tag": "0.9.7+7",
+  "watcher_tag": "0.9.7+8",
   "web_components_rev": "8f57dac273412a7172c8ade6f361b407e2e4ed02",
   "web_socket_channel_tag": "1.0.7",
   "WebCore_rev": "fb11e887f77919450e497344da570d780e078bc8",
@@ -200,8 +196,6 @@ Var("dart_root") + "/tests/co19_2/src":
       Var("dart_git") + "args.git" + "@" + Var("args_tag"),
   Var("dart_root") + "/third_party/pkg/async":
       Var("dart_git") + "async.git" + "@" + Var("async_tag"),
-  Var("dart_root") + "/third_party/pkg/barback":
-      Var("dart_git") + "barback.git" + "@" + Var("barback_tag"),
   Var("dart_root") + "/third_party/pkg/bazel_worker":
       Var("dart_git") + "bazel_worker.git" + "@" + Var("bazel_worker_tag"),
   Var("dart_root") + "/third_party/pkg/boolean_selector":

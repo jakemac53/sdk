@@ -1022,6 +1022,13 @@ ConstructorWithReturnType:
   script:
     - "class C { int C() {} }"
 
+ConstructorWithTypeParameters:
+  template: "Constructors can't have type parameters."
+  severity: ERROR
+  script:
+    - "class C { C<T>() {} }"
+    - "class C { C.foo<T>() {} }"
+
 FieldInitializerOutsideConstructor:
   template: "Field formal parameters can only be used in a constructor."
   tip: "Try removing 'this.'."
@@ -1065,40 +1072,16 @@ CandidateFoundIsDefaultConstructor:
   template: "The class '#name' has a constructor that takes no arguments."
   severity: CONTEXT
 
-TooFewArgumentsToFunction:
-  template: "Too few positional arguments to function: #count required, #count2 given."
+TooFewArguments:
+  template: "Too few positional arguments: #count required, #count2 given."
   severity: ERROR_LEGACY_WARNING
 
-TooFewArgumentsToMethod:
-  template: "Too few positional arguments to method: #count required, #count2 given."
+TooManyArguments:
+  template: "Too many positional arguments: #count allowed, #count2 given."
   severity: ERROR_LEGACY_WARNING
 
-TooFewArgumentsToConstructor:
-  template: "Too few positional arguments to constructor: #count required, #count2 given."
-  severity: ERROR_LEGACY_WARNING
-
-TooManyArgumentsToFunction:
-  template: "Too many positional arguments to function: #count allowed, #count2 given."
-  severity: ERROR_LEGACY_WARNING
-
-TooManyArgumentsToMethod:
-  template: "Too many positional arguments to method: #count allowed, #count2 given."
-  severity: ERROR_LEGACY_WARNING
-
-TooManyArgumentsToConstructor:
-  template: "Too many positional arguments to constructor: #count allowed, #count2 given."
-  severity: ERROR_LEGACY_WARNING
-
-FunctionHasNoSuchNamedParameter:
-  template: "Function has no named parameter with the name '#name'."
-  severity: ERROR_LEGACY_WARNING
-
-MethodHasNoSuchNamedParameter:
-  template: "Method has no named parameter with the name '#name'."
-  severity: ERROR_LEGACY_WARNING
-
-ConstructorHasNoSuchNamedParameter:
-  template: "Constructor has no named parameter with the name '#name'."
+NoSuchNamedParameter:
+  template: "No named parameter with the name '#name'."
   severity: ERROR_LEGACY_WARNING
 
 AbstractClassInstantiation:
@@ -1202,7 +1185,7 @@ FastaUsageLong:
         Read the SDK platform from <file>, which should be in Dill/Kernel IR format
         and contain the Dart SDK.
 
-      --target=none|vm|vmcc|vmreify|flutter
+      --target=dart2js|dart2js_server|dart_runner|flutter|flutter_runner|none|vm
         Specify the target configuration.
 
       --verify
@@ -1648,6 +1631,8 @@ PlatformPrivateLibraryAccess:
 
 TypedefNotFunction:
   template: "Can't create typedef from non-function type."
+  analyzerCode: INVALID_GENERIC_FUNCTION_TYPE
+  dart2jsCode: "*fatal*"
 
 LibraryDirectiveNotFirst:
   template: "The library directive must appear before all other directives."
@@ -1962,12 +1947,6 @@ AccessError:
 ExpressionNotMetadata:
   template: "This can't be used as metadata; metadata should be a reference to a compile-time constant variable, or a call to a constant constructor."
 
-AnnotationOnEnumConstant:
-  template: "Enum constants can't have annotations."
-  tip: "Try removing the annotation."
-  analyzerCode: ANNOTATION_ON_ENUM_CONSTANT
-  dart2jsCode: "*fatal*"
-
 ExpectedAnInitializer:
   template: "Expected an initializer."
   analyzerCode: MISSING_INITIALIZER
@@ -2219,3 +2198,35 @@ ImplicitCallOfNonMethod:
 ExpectedOneExpression:
   template: "Expected one expression, but found additional input."
   severity: ERROR
+
+ForInLoopNotAssignable:
+  template: "Can't assign to this, so it can't be used in a for-in loop."
+  severity: ERROR
+  statement: "for (1 in []) {}"
+  script: |
+    import "dart:core" as prefix;
+
+    main() {
+      for (prefix in []) {}
+    }
+
+ForInLoopExactlyOneVariable:
+  template: "A for-in loop can't have more than one loop variable."
+  severity: ERROR
+  statement: "for (var x, y in []) {}"
+
+InitializingFormalTypeMismatch:
+  template: "The type of parameter '#name' (#type) is not a subtype of the corresponding field's type (#type2)."
+  tip: "Try changing the type of parameter '#name' to a subtype of #type2."
+  severity: ERROR_LEGACY_WARNING
+  analyzerCode: INVALID_PARAMETER_DECLARATION
+  dart2jsCode: "*fatal*"
+  script: >
+    class C {
+      int x;
+      C(num this.x);
+    }
+
+InitializingFormalTypeMismatchField:
+  template: "The field that corresponds to the parameter."
+  severity: CONTEXT

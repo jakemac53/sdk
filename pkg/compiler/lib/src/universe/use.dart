@@ -16,18 +16,14 @@
 /// program.
 library dart2js.universe.use;
 
-import '../closure.dart' show BoxFieldElement;
 import '../common.dart';
 import '../constants/values.dart';
 import '../elements/types.dart';
-import '../elements/elements.dart' show Element;
 import '../elements/entities.dart';
 import '../js_model/closure.dart';
 import '../util/util.dart' show equalElements, Hashing;
-import '../world.dart' show World;
 import 'call_structure.dart' show CallStructure;
 import 'selector.dart' show Selector;
-import 'world_builder.dart' show ReceiverConstraint;
 
 enum DynamicUseKind {
   INVOKE,
@@ -36,19 +32,37 @@ enum DynamicUseKind {
 }
 
 /// The use of a dynamic property. [selector] defined the name and kind of the
-/// property and [mask] defines the known constraint for the object on which
+/// property and [receiverConstraint] defines the known constraint for the object on which
 /// the property is accessed.
 class DynamicUse {
   final Selector selector;
 
   DynamicUse(this.selector);
 
-  bool appliesUnnamed(MemberEntity element, World world) {
-    return selector.appliesUnnamed(element) &&
-        (mask == null || mask.canHit(element, selector, world));
+  /// Short textual representation use for testing.
+  String get shortText {
+    StringBuffer sb = new StringBuffer();
+    sb.write(selector.name);
+    if (typeArguments != null && typeArguments.isNotEmpty) {
+      sb.write('<');
+      sb.write(typeArguments.join(','));
+      sb.write('>');
+    }
+    if (selector.isCall) {
+      sb.write('(');
+      sb.write(selector.callStructure.positionalArgumentCount);
+      if (selector.callStructure.namedArgumentCount > 0) {
+        sb.write(',');
+        sb.write(selector.callStructure.getOrderedNamedArguments().join(','));
+      }
+      sb.write(')');
+    } else if (selector.isSetter) {
+      sb.write('=');
+    }
+    return sb.toString();
   }
 
-  ReceiverConstraint get mask => null;
+  Object get receiverConstraint => null;
 
   DynamicUseKind get kind {
     if (selector.isGetter) {
@@ -62,18 +76,18 @@ class DynamicUse {
 
   List<DartType> get typeArguments => const <DartType>[];
 
-  int get hashCode =>
-      Hashing.listHash(typeArguments, Hashing.objectsHash(selector, mask));
+  int get hashCode => Hashing.listHash(
+      typeArguments, Hashing.objectsHash(selector, receiverConstraint));
 
   bool operator ==(other) {
     if (identical(this, other)) return true;
     if (other is! DynamicUse) return false;
     return selector == other.selector &&
-        mask == other.mask &&
+        receiverConstraint == other.receiverConstraint &&
         equalElements(typeArguments, other.typeArguments);
   }
 
-  String toString() => '$selector,$mask';
+  String toString() => '$selector,$receiverConstraint';
 }
 
 class GenericDynamicUse extends DynamicUse {
@@ -97,10 +111,11 @@ class GenericDynamicUse extends DynamicUse {
 /// This is used in the codegen phase where receivers are constrained to a
 /// type mask or similar.
 class ConstrainedDynamicUse extends DynamicUse {
-  final ReceiverConstraint mask;
+  final Object receiverConstraint;
   final List<DartType> _typeArguments;
 
-  ConstrainedDynamicUse(Selector selector, this.mask, this._typeArguments)
+  ConstrainedDynamicUse(
+      Selector selector, this.receiverConstraint, this._typeArguments)
       : super(selector) {
     assert(
         selector.callStructure.typeArgumentCount ==
@@ -149,11 +164,52 @@ class StaticUse {
       {this.type, this.callStructure, typeArgumentsHash: 0})
       : this.element = element,
         this.hashCode = Hashing.objectsHash(
-            element, kind, type, typeArgumentsHash, callStructure) {
-    assert(
-        !(element is Element && !element.isDeclaration),
-        failedAt(element,
-            "Static use element $element must be the declaration element."));
+            element, kind, type, typeArgumentsHash, callStructure);
+
+  /// Short textual representation use for testing.
+  String get shortText {
+    StringBuffer sb = new StringBuffer();
+    switch (kind) {
+      case StaticUseKind.FIELD_SET:
+      case StaticUseKind.SUPER_FIELD_SET:
+      case StaticUseKind.SET:
+        sb.write('set:');
+        break;
+      case StaticUseKind.INIT:
+        sb.write('init:');
+        break;
+      case StaticUseKind.CLOSURE:
+        sb.write('def:');
+        break;
+      default:
+    }
+    if (element is MemberEntity) {
+      MemberEntity member = element;
+      if (member.enclosingClass != null) {
+        sb.write(member.enclosingClass.name);
+        sb.write('.');
+      }
+    }
+    if (element.name == null) {
+      sb.write('<anonymous>');
+    } else {
+      sb.write(element.name);
+    }
+    if (typeArguments != null && typeArguments.isNotEmpty) {
+      sb.write('<');
+      sb.write(typeArguments.join(','));
+      sb.write('>');
+    }
+    if (callStructure != null) {
+      sb.write('(');
+      sb.write(callStructure.positionalArgumentCount);
+      if (callStructure.namedArgumentCount > 0) {
+        sb.write(',');
+        sb.write(callStructure.getOrderedNamedArguments().join(','));
+      }
+      sb.write(')');
+    }
+    return sb.toString();
   }
 
   List<DartType> get typeArguments => null;
@@ -417,9 +473,7 @@ class StaticUse {
   /// Read access of an instance field or boxed field [element].
   factory StaticUse.fieldGet(FieldEntity element) {
     assert(
-        element.isInstanceMember ||
-            element is BoxFieldElement ||
-            element is JRecordField,
+        element.isInstanceMember || element is JRecordField,
         failedAt(element,
             "Field init element $element must be an instance or boxed field."));
     return new StaticUse.internal(element, StaticUseKind.FIELD_GET);
@@ -428,9 +482,7 @@ class StaticUse {
   /// Write access of an instance field or boxed field [element].
   factory StaticUse.fieldSet(FieldEntity element) {
     assert(
-        element.isInstanceMember ||
-            element is BoxFieldElement ||
-            element is JRecordField,
+        element.isInstanceMember || element is JRecordField,
         failedAt(element,
             "Field init element $element must be an instance or boxed field."));
     return new StaticUse.internal(element, StaticUseKind.FIELD_SET);
@@ -533,6 +585,45 @@ class TypeUse {
         this.kind = kind,
         this.hashCode = Hashing.objectHash(type, Hashing.objectHash(kind));
 
+  /// Short textual representation use for testing.
+  String get shortText {
+    StringBuffer sb = new StringBuffer();
+    switch (kind) {
+      case TypeUseKind.IS_CHECK:
+        sb.write('is:');
+        break;
+      case TypeUseKind.AS_CAST:
+        sb.write('as:');
+        break;
+      case TypeUseKind.CHECKED_MODE_CHECK:
+        sb.write('check:');
+        break;
+      case TypeUseKind.CATCH_TYPE:
+        sb.write('catch:');
+        break;
+      case TypeUseKind.TYPE_LITERAL:
+        sb.write('lit:');
+        break;
+      case TypeUseKind.INSTANTIATION:
+        sb.write('inst:');
+        break;
+      case TypeUseKind.MIRROR_INSTANTIATION:
+        sb.write('mirror:');
+        break;
+      case TypeUseKind.NATIVE_INSTANTIATION:
+        sb.write('native:');
+        break;
+      case TypeUseKind.IMPLICIT_CAST:
+        sb.write('impl:');
+        break;
+      case TypeUseKind.PARAMETER_CHECK:
+        sb.write('param:');
+        break;
+    }
+    sb.write(type);
+    return sb.toString();
+  }
+
   /// [type] used in an is check, like `e is T` or `e is! T`.
   factory TypeUse.isCheck(DartType type) {
     return new TypeUse.internal(type, TypeUseKind.IS_CHECK);
@@ -615,6 +706,11 @@ class ConstantUse {
 
   ConstantUse._(this.value, this.kind)
       : this.hashCode = Hashing.objectHash(value, kind.hashCode);
+
+  /// Short textual representation use for testing.
+  String get shortText {
+    return value.toDartText();
+  }
 
   /// Constant used as the initial value of a field.
   ConstantUse.init(ConstantValue value) : this._(value, ConstantUseKind.DIRECT);

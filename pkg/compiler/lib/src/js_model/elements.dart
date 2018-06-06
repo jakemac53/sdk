@@ -143,8 +143,9 @@ class JsElementCreatorMixin {
     return new JConstructorBody(constructor);
   }
 
-  JGeneratorBody createGeneratorBody(FunctionEntity function) {
-    return new JGeneratorBody(function);
+  JGeneratorBody createGeneratorBody(
+      FunctionEntity function, DartType elementType) {
+    return new JGeneratorBody(function, elementType);
   }
 
   IndexedFunction createGetter(LibraryEntity library,
@@ -285,8 +286,7 @@ class TypeConverter implements DartTypeVisitor<DartType, EntityConverter> {
         visitList(type.optionalParameterTypes, converter),
         type.namedParameters,
         visitList(type.namedParameterTypes, converter),
-        type.typeVariables,
-        visitTypedefType(type.typedefType, converter));
+        type.typeVariables);
   }
 
   @override
@@ -504,9 +504,10 @@ class JMethod extends JFunction {
 
 class JGeneratorBody extends JFunction {
   final FunctionEntity function;
+  final DartType elementType;
   final int hashCode;
 
-  JGeneratorBody(this.function)
+  JGeneratorBody(this.function, this.elementType)
       : hashCode = function.hashCode + 1, // Hack stabilize sort order.
         super(function.library, function.enclosingClass, function.memberName,
             function.parameterStructure, function.asyncMarker,

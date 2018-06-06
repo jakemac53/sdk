@@ -138,9 +138,10 @@ typedef FixedCache<intptr_t, CatchEntryState, 16> CatchEntryStateCache;
   V(NONPRODUCT, type_checks, EnableTypeChecks, enable_type_checks,             \
     FLAG_enable_type_checks)                                                   \
   V(NONPRODUCT, asserts, EnableAsserts, enable_asserts, FLAG_enable_asserts)   \
-  V(NONPRODUCT, reify_generic_functions, ReifyGenericFunctions,                \
+  V(PRODUCT, reify_generic_functions, ReifyGenericFunctions,                   \
     reify_generic_functions, FLAG_reify_generic_functions)                     \
-  V(NONPRODUCT, strong, Strong, strong, FLAG_strong)                           \
+  V(PRODUCT, sync_async, SyncAsync, sync_async, FLAG_sync_async)               \
+  V(PRODUCT, strong, Strong, strong, FLAG_strong)                              \
   V(NONPRODUCT, error_on_bad_type, ErrorOnBadType, enable_error_on_bad_type,   \
     FLAG_error_on_bad_type)                                                    \
   V(NONPRODUCT, error_on_bad_override, ErrorOnBadOverride,                     \
@@ -717,6 +718,8 @@ class Isolate : public BaseIsolate {
 #define FLAG_FOR_NONPRODUCT(from_field, from_flag) (from_flag)
 #endif
 
+#define FLAG_FOR_PRODUCT(from_field, from_flag) (from_field)
+
 #define DECLARE_GETTER(when, name, bitname, isolate_flag_name, flag_name)      \
   bool name() const {                                                          \
     const bool false_by_default = false;                                       \
@@ -726,6 +729,7 @@ class Isolate : public BaseIsolate {
   ISOLATE_FLAG_LIST(DECLARE_GETTER)
 #undef FLAG_FOR_NONPRODUCT
 #undef FLAG_FOR_PRECOMPILER
+#undef FLAG_FOR_PRODUCT
 #undef DECLARE_GETTER
 
 #if defined(PRODUCT)
@@ -787,8 +791,10 @@ class Isolate : public BaseIsolate {
 
   // Visit all object pointers. Caller must ensure concurrent sweeper is not
   // running, and the visitor must not allocate.
-  void VisitObjectPointers(ObjectPointerVisitor* visitor, bool validate_frames);
-  void VisitStackPointers(ObjectPointerVisitor* visitor, bool validate_frames);
+  void VisitObjectPointers(ObjectPointerVisitor* visitor,
+                           ValidationPolicy validate_frames);
+  void VisitStackPointers(ObjectPointerVisitor* visitor,
+                          ValidationPolicy validate_frames);
 
   void set_user_tag(uword tag) { user_tag_ = tag; }
 
@@ -850,6 +856,7 @@ class Isolate : public BaseIsolate {
   V(ErrorOnBadType)                                                            \
   V(ErrorOnBadOverride)                                                        \
   V(ReifyGenericFunctions)                                                     \
+  V(SyncAsync)                                                                 \
   V(Strong)                                                                    \
   V(UseFieldGuards)                                                            \
   V(UseOsr)                                                                    \

@@ -4,15 +4,14 @@
 
 library ordered_typeset;
 
-import 'common.dart';
-import 'diagnostics/diagnostic_listener.dart' show DiagnosticReporter;
-import 'elements/elements.dart' show ClassElement;
-import 'elements/entities.dart';
-import 'elements/resolution_types.dart';
-import 'elements/types.dart';
-import 'util/util.dart' show Link, LinkBuilder;
+import 'package:front_end/src/fasta/util/link.dart' show Link, LinkBuilder;
 import 'package:front_end/src/fasta/util/link_implementation.dart'
     show LinkEntry;
+
+import 'common.dart';
+import 'diagnostics/diagnostic_listener.dart' show DiagnosticReporter;
+import 'elements/entities.dart';
+import 'elements/types.dart';
 
 /**
  * An ordered set of the supertypes of a class. The supertypes of a class are
@@ -285,7 +284,7 @@ abstract class OrderedTypeSetBuilderBase implements OrderedTypeSetBuilder {
       }
     }
     return new OrderedTypeSet.internal(
-        levels, levels.last, allSupertypes.toLink());
+        levels, levels.last, allSupertypes.toLink(const Link<InterfaceType>()));
   }
 
   String toString() {
@@ -293,33 +292,9 @@ abstract class OrderedTypeSetBuilderBase implements OrderedTypeSetBuilder {
     for (int depth = 0; depth <= maxDepth; depth++) {
       sb.write('$depth: ');
       LinkEntry<InterfaceType> first = map[depth];
-      if (first.isNotEmpty) {
-        sb.write('${first.head}');
-        while (first.tail.isNotEmpty) {
-          sb.write(', ${first.tail.head}');
-          first = first.tail;
-        }
-      }
+      first.printOn(sb, ", ");
       sb.write('\n');
     }
     return sb.toString();
   }
-}
-
-class ResolutionOrderedTypeSetBuilder extends OrderedTypeSetBuilderBase {
-  ResolutionOrderedTypeSetBuilder(ClassElement cls, InterfaceType objectType,
-      {DiagnosticReporter reporter})
-      : super(cls, objectType, reporter: reporter);
-
-  InterfaceType getThisType(ClassElement cls) => cls.thisType;
-
-  ResolutionInterfaceType substByContext(
-      ResolutionInterfaceType type, ResolutionInterfaceType context) {
-    return type.substByContext(context);
-  }
-
-  int getHierarchyDepth(ClassElement cls) => cls.hierarchyDepth;
-
-  OrderedTypeSet getOrderedTypeSet(ClassElement cls) =>
-      cls.allSupertypesAndSelf;
 }

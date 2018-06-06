@@ -9,6 +9,7 @@
 #include "vm/class_finalizer.h"
 #include "vm/compiler/frontend/kernel_to_il.h"
 #include "vm/compiler/jit/compiler.h"
+#include "vm/dart_api_impl.h"
 #include "vm/dart_entry.h"
 #include "vm/exceptions.h"
 #include "vm/flags.h"
@@ -313,7 +314,7 @@ static RawInstance* CreateClassMirror(const Class& cls,
     return CreateTypedefMirror(cls, type, is_declaration, owner_mirror);
   }
 
-  const Array& args = Array::Handle(Array::New(9));
+  const Array& args = Array::Handle(Array::New(10));
   args.SetAt(0, MirrorReference::Handle(MirrorReference::New(cls)));
   args.SetAt(1, type);
   // Note that the VM does not consider mixin application aliases to be mixin
@@ -328,8 +329,9 @@ static RawInstance* CreateClassMirror(const Class& cls,
   args.SetAt(4, Bool::Get(cls.is_abstract()));
   args.SetAt(5, Bool::Get(cls.IsGeneric()));
   args.SetAt(6, Bool::Get(cls.is_mixin_app_alias()));
-  args.SetAt(7, cls.NumTypeParameters() == 0 ? Bool::False() : is_declaration);
-  args.SetAt(8, Bool::Get(cls.is_enum_class()));
+  args.SetAt(7, Bool::Get(cls.is_transformed_mixin_application()));
+  args.SetAt(8, cls.NumTypeParameters() == 0 ? Bool::False() : is_declaration);
+  args.SetAt(9, Bool::Get(cls.is_enum_class()));
   return CreateMirror(Symbols::_LocalClassMirror(), args);
 }
 
@@ -758,6 +760,95 @@ DEFINE_NATIVE_ENTRY(MirrorSystem_isolate, 0) {
   return CreateIsolateMirror();
 }
 
+static void ThrowLanguageError(const char* message) {
+  const Error& error =
+      Error::Handle(LanguageError::New(String::Handle(String::New(message))));
+  Exceptions::PropagateError(error);
+}
+
+DEFINE_NATIVE_ENTRY(IsolateMirror_loadUri, 1) {
+  GET_NON_NULL_NATIVE_ARGUMENT(String, uri, arguments->NativeArgAt(0));
+
+  Dart_LibraryTagHandler handler = isolate->library_tag_handler();
+  if (handler == NULL) {
+    ThrowLanguageError("no library handler registered");
+  }
+
+  // Canonicalize library URI.
+  String& canonical_uri = String::Handle(zone);
+  if (uri.StartsWith(Symbols::DartScheme())) {
+    canonical_uri = uri.raw();
+  } else {
+    isolate->BlockClassFinalization();
+    Object& result = Object::Handle(zone);
+    {
+      TransitionVMToNative transition(thread);
+      Api::Scope api_scope(thread);
+      Dart_Handle retval = handler(
+          Dart_kCanonicalizeUrl,
+          Api::NewHandle(thread, isolate->object_store()->root_library()),
+          Api::NewHandle(thread, uri.raw()));
+      result = Api::UnwrapHandle(retval);
+    }
+    isolate->UnblockClassFinalization();
+    if (result.IsError()) {
+      if (result.IsLanguageError()) {
+        Exceptions::ThrowCompileTimeError(LanguageError::Cast(result));
+      }
+      Exceptions::PropagateError(Error::Cast(result));
+    } else if (!result.IsString()) {
+      ThrowLanguageError("library handler failed URI canonicalization");
+    }
+
+    canonical_uri ^= result.raw();
+  }
+
+  // Create a new library if it does not exist yet.
+  Library& library =
+      Library::Handle(zone, Library::LookupLibrary(thread, canonical_uri));
+  if (library.IsNull()) {
+    library = Library::New(canonical_uri);
+    library.Register(thread);
+  }
+
+  // Ensure loading started.
+  if (library.LoadNotStarted()) {
+    library.SetLoadRequested();
+
+    isolate->BlockClassFinalization();
+    Object& result = Object::Handle(zone);
+    {
+      TransitionVMToNative transition(thread);
+      Api::Scope api_scope(thread);
+      Dart_Handle retval = handler(
+          Dart_kImportTag,
+          Api::NewHandle(thread, isolate->object_store()->root_library()),
+          Api::NewHandle(thread, canonical_uri.raw()));
+      result = Api::UnwrapHandle(retval);
+    }
+    isolate->UnblockClassFinalization();
+    if (result.IsError()) {
+      if (result.IsLanguageError()) {
+        Exceptions::ThrowCompileTimeError(LanguageError::Cast(result));
+      }
+      Exceptions::PropagateError(Error::Cast(result));
+    }
+  }
+
+  if (!library.Loaded()) {
+    // This code assumes a synchronous tag handler (which dart::bin and tonic
+    // provide). Strictly though we should complete a future in response to
+    // Dart_FinalizeLoading.
+    UNIMPLEMENTED();
+  }
+
+  if (!ClassFinalizer::ProcessPendingClasses()) {
+    Exceptions::PropagateError(Error::Handle(thread->sticky_error()));
+  }
+
+  return CreateLibraryMirror(thread, library);
+}
+
 DEFINE_NATIVE_ENTRY(Mirrors_makeLocalClassMirror, 1) {
   GET_NON_NULL_NATIVE_ARGUMENT(AbstractType, type, arguments->NativeArgAt(0));
   PROPAGATE_IF_MALFORMED(type);
@@ -993,7 +1084,13 @@ DEFINE_NATIVE_ENTRY(ClassMirror_mixin, 1) {
   PROPAGATE_IF_MALFORMED(type);
   ASSERT(type.IsFinalized());
   const Class& cls = Class::Handle(type.type_class());
-  const AbstractType& mixin_type = AbstractType::Handle(cls.mixin());
+  AbstractType& mixin_type = AbstractType::Handle();
+  if (cls.is_transformed_mixin_application()) {
+    const Array& interfaces = Array::Handle(cls.interfaces());
+    mixin_type ^= interfaces.At(interfaces.Length() - 1);
+  } else {
+    mixin_type = cls.mixin();
+  }
   ASSERT(mixin_type.IsNull() || mixin_type.IsFinalized());
   return mixin_type.raw();
 }
@@ -1005,7 +1102,13 @@ DEFINE_NATIVE_ENTRY(ClassMirror_mixin_instantiated, 2) {
   PROPAGATE_IF_MALFORMED(type);
   ASSERT(type.IsFinalized());
   const Class& cls = Class::Handle(type.type_class());
-  const AbstractType& mixin_type = AbstractType::Handle(cls.mixin());
+  AbstractType& mixin_type = AbstractType::Handle();
+  if (cls.is_transformed_mixin_application()) {
+    const Array& interfaces = Array::Handle(cls.interfaces());
+    mixin_type ^= interfaces.At(interfaces.Length() - 1);
+  } else {
+    mixin_type = cls.mixin();
+  }
   if (mixin_type.IsNull()) {
     return mixin_type.raw();
   }
@@ -1215,49 +1318,6 @@ DEFINE_NATIVE_ENTRY(TypeVariableMirror_owner, 1) {
 DEFINE_NATIVE_ENTRY(TypeVariableMirror_upper_bound, 1) {
   GET_NON_NULL_NATIVE_ARGUMENT(TypeParameter, param, arguments->NativeArgAt(0));
   return param.bound();
-}
-
-DEFINE_NATIVE_ENTRY(Mirrors_evalInLibraryWithPrivateKey, 2) {
-  GET_NON_NULL_NATIVE_ARGUMENT(String, expression, arguments->NativeArgAt(0));
-  GET_NATIVE_ARGUMENT(String, private_key, arguments->NativeArgAt(1));
-
-  const GrowableObjectArray& libraries =
-      GrowableObjectArray::Handle(isolate->object_store()->libraries());
-  const int num_libraries = libraries.Length();
-  Library& each_library = Library::Handle();
-  Library& ctxt_library = Library::Handle();
-  String& library_key = String::Handle();
-
-  if (private_key.IsNull()) {
-    ctxt_library = Library::CoreLibrary();
-  } else {
-    for (int i = 0; i < num_libraries; i++) {
-      each_library ^= libraries.At(i);
-      library_key = each_library.private_key();
-      if (library_key.Equals(private_key)) {
-        ctxt_library = each_library.raw();
-        break;
-      }
-    }
-  }
-  ASSERT(!ctxt_library.IsNull());
-  const Object& result = Object::Handle(ctxt_library.Evaluate(
-      expression, Array::empty_array(), Array::empty_array()));
-  if (result.IsError()) {
-    Exceptions::PropagateError(Error::Cast(result));
-    UNREACHABLE();
-  }
-
-  // Because we currently only use this native for building field extractors and
-  // setters, assume the result is a closure and mark its function as invisible,
-  // so it will not appear in stack traces. Whenever we support
-  // ObjectMirror.evaluate this will need to be separated.
-  ASSERT(result.IsClosure());
-  const Function& func = Function::Handle(Closure::Cast(result).function());
-  func.set_is_visible(false);
-  func.set_is_debuggable(false);
-
-  return result.raw();
 }
 
 DEFINE_NATIVE_ENTRY(TypedefMirror_declaration, 1) {

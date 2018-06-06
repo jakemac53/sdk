@@ -82,11 +82,8 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
     super.attached();
     _r.enable();
     _subscription = _events.onDebugEvent
-        .where((e) =>
-            (e is M.BreakpointAddedEvent) ||
-            (e is M.BreakpointResolvedEvent) ||
-            (e is M.BreakpointRemovedEvent))
-        .map((e) => e.breakpoint)
+        .where((e) => e is M.BreakpointEvent)
+        .map((e) => (e as M.BreakpointEvent).breakpoint)
         .listen((M.Breakpoint b) {
       final loc = b.location;
       int line;
@@ -94,10 +91,10 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
         if (loc.tokenPos != null) {
           line = _loadedScript.tokenToLine(loc.tokenPos);
         } else {
-          line = loc.line;
+          line = (loc as dynamic).line;
         }
       } else {
-        line = loc.line;
+        line = (loc as dynamic).line;
       }
       if ((line == null) || ((line >= _startLine) && (line <= _endLine))) {
         _r.dirty();
@@ -170,7 +167,7 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
   void _scrollToCurrentPos() {
     var lines = getElementsByClassName(makeLineClass(_currentLine));
     if (lines.length > 0) {
-      lines[0].scrollIntoView();
+      (lines[0] as dynamic).scrollIntoView();
     }
   }
 
@@ -227,7 +224,7 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
       reports.add(S.Isolate.kProfileReport);
     }
     S.Isolate isolate = _isolate as S.Isolate;
-    var sourceReport =
+    dynamic sourceReport =
         await isolate.getSourceReport(reports, script, _startPos, _endPos);
     _possibleBreakpointLines =
         S.getPossibleBreakpointLines(sourceReport, script);
@@ -355,8 +352,9 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
   }
 
   Future loadDeclarationsOfLibrary(S.Library lib) {
-    return lib.load().then((lib) {
-      var loads = [];
+    return lib.load().then((serviceObject) {
+      S.Library lib = serviceObject;
+      var loads = <Future>[];
       for (var func in lib.functions) {
         loads.add(func.load());
       }
@@ -371,8 +369,9 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
   }
 
   Future loadDeclarationsOfClass(S.Class cls) {
-    return cls.load().then((cls) {
-      var loads = [];
+    return cls.load().then((serviceObject) {
+      S.Class cls = serviceObject;
+      var loads = <Future>[];
       for (var func in cls.functions) {
         loads.add(func.load());
       }
@@ -431,9 +430,9 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
       }
     }
     if (targetUri.scheme == 'package') {
-      targetUri = "packages/${targetUri.path}";
+      var targetUriString = "packages/${targetUri.path}";
       for (M.Library l in script.isolate.libraries) {
-        if (targetUri.toString() == l.uri) {
+        if (targetUriString == l.uri) {
           return l;
         }
       }
@@ -814,7 +813,7 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
         });
       } else {
         // Existing breakpoint.  Remove it.
-        List pending = [];
+        List<Future> pending = [];
         for (var bpt in line.breakpoints) {
           pending.add(line.script.isolate.removeBreakpoint(bpt));
         }
@@ -928,7 +927,7 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
   /// children have been added, and only supports one node at a time.
   static void _makeCssClassUncopyable(Element root, String className) {
     var noCopyNodes = root.getElementsByClassName(className);
-    for (var node in noCopyNodes) {
+    for (HtmlElement node in noCopyNodes) {
       node.style.setProperty('-moz-user-select', 'none');
       node.style.setProperty('-khtml-user-select', 'none');
       node.style.setProperty('-webkit-user-select', 'none');
@@ -938,11 +937,11 @@ class ScriptInsetElement extends HtmlElement implements Renderable {
     root.onCopy.listen((event) {
       // Mark the nodes as hidden before the copy happens, then mark them as
       // visible on the next event loop turn.
-      for (var node in noCopyNodes) {
+      for (HtmlElement node in noCopyNodes) {
         node.style.visibility = 'hidden';
       }
       Timer.run(() {
-        for (var node in noCopyNodes) {
+        for (HtmlElement node in noCopyNodes) {
           node.style.visibility = 'visible';
         }
       });
@@ -1065,7 +1064,7 @@ class BreakpointAnnotation extends Annotation {
   BreakpointAnnotation(M.IsolateRef isolate, M.ObjectRepository objects,
       RenderingQueue queue, this.bpt)
       : super(isolate, objects, queue) {
-    var script = bpt.location.script;
+    S.Script script = bpt.location.script;
     var location = bpt.location;
     if (location.tokenPos != null) {
       var pos = location.tokenPos;
@@ -1089,7 +1088,7 @@ class BreakpointAnnotation extends Annotation {
     if (element == null) {
       return; // TODO(rmacnak): Handling overlapping annotations.
     }
-    var script = bpt.location.script;
+    S.Script script = bpt.location.script;
     var pos = bpt.location.tokenPos;
     int line = script.tokenToLine(pos);
     int column = script.tokenToCol(pos);

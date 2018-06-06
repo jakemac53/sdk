@@ -185,13 +185,17 @@ class ConstantsTransformer extends Transformer {
 
   void transformAnnotations(List<Expression> nodes, TreeNode parent) {
     if (evaluateAnnotations && nodes.length > 0) {
-      constantEvaluator.withNewEnvironment(() {
-        for (int i = 0; i < nodes.length; ++i) {
-          nodes[i] = tryEvaluateAndTransformWithContext(parent, nodes[i])
-            ..parent = parent;
-        }
-      });
+      transformExpressions(nodes, parent);
     }
+  }
+
+  void transformExpressions(List<Expression> nodes, TreeNode parent) {
+    constantEvaluator.withNewEnvironment(() {
+      for (int i = 0; i < nodes.length; ++i) {
+        nodes[i] = tryEvaluateAndTransformWithContext(parent, nodes[i])
+          ..parent = parent;
+      }
+    });
   }
 
   // Handle definition of constants:
@@ -248,7 +252,10 @@ class ConstantsTransformer extends Transformer {
         return null;
       }
     }
-    return super.visitVariableDeclaration(node);
+    if (node.initializer != null) {
+      node.initializer = node.initializer.accept(this)..parent = node;
+    }
+    return node;
   }
 
   visitField(Field node) {
@@ -290,6 +297,11 @@ class ConstantsTransformer extends Transformer {
       return tryEvaluateAndTransformWithContext(node, node);
     }
     return super.visitStaticGet(node);
+  }
+
+  visitSwitchCase(SwitchCase node) {
+    transformExpressions(node.expressions, node);
+    return super.visitSwitchCase(node);
   }
 
   visitVariableGet(VariableGet node) {
@@ -1245,8 +1257,10 @@ abstract class ErrorReporter {
   failedAssertion(List<TreeNode> context, TreeNode node, String message);
 }
 
-class _SimpleErrorReporter implements ErrorReporter {
-  const _SimpleErrorReporter();
+abstract class ErrorReporterBase implements ErrorReporter {
+  const ErrorReporterBase();
+
+  report(List<TreeNode> context, String message, TreeNode node);
 
   getFileUri(TreeNode node) {
     while (node is! FileUriNode) {
@@ -1325,6 +1339,10 @@ class _SimpleErrorReporter implements ErrorReporter {
         'The assertion condition evaluated to "false" with message "$message"',
         node);
   }
+}
+
+class _SimpleErrorReporter extends ErrorReporterBase {
+  const _SimpleErrorReporter();
 
   report(List<TreeNode> context, String message, TreeNode node) {
     io.exitCode = 42;

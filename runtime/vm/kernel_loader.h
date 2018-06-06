@@ -128,7 +128,7 @@ class KernelLoader : public ValueObject {
 
   // Returns the library containing the main procedure, null if there
   // was no main procedure, or a failure object if there was an error.
-  Object& LoadProgram(bool process_pending_classes = true);
+  RawObject* LoadProgram(bool process_pending_classes = true);
 
   // Finds all libraries that have been modified in this incremental
   // version of the kernel program file.
@@ -137,14 +137,30 @@ class KernelLoader : public ValueObject {
                                     BitVector* modified_libs,
                                     bool force_reload);
 
-  void LoadLibrary(intptr_t index);
+  RawLibrary* LoadLibrary(intptr_t index);
 
   static void FinishLoading(const Class& klass);
 
   const Array& ReadConstantTable();
-  RawString* DetectExternalName();
+
+  // Check for the presence of a (possibly const) constructor for the
+  // 'ExternalName' class. If found, returns the name parameter to the
+  // constructor.
+  RawString* DetectExternalNameCtor();
+
+  // Check for the presence of a (possibly const) constructor for the 'pragma'
+  // class. Returns whether it was found (no details about the type of pragma).
+  bool DetectPragmaCtor();
+
+  bool IsClassName(NameIndex name, const String& library, const String& klass);
+
   void AnnotateNativeProcedures(const Array& constant_table);
   void LoadNativeExtensionLibraries(const Array& constant_table);
+
+  void ReadProcedureAnnotations(intptr_t annotation_count,
+                                String* native_name,
+                                bool* is_potential_native,
+                                bool* has_pragma_annotation);
 
   const String& DartSymbolPlain(StringIndex index) {
     return translation_helper_.DartSymbolPlain(index);

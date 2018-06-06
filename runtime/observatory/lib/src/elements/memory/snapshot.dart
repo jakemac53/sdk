@@ -165,7 +165,7 @@ class MemorySnapshotElement extends HtmlElement implements Renderable {
     ];
   }
 
-  static Element _createDominator(toggle) {
+  static HtmlElement _createDominator(toggle) {
     return new DivElement()
       ..classes = ['tree-item']
       ..children = [
@@ -186,7 +186,8 @@ class MemorySnapshotElement extends HtmlElement implements Renderable {
   static const int kMaxChildren = 100;
   static const int kMinRetainedSize = 4096;
 
-  static _getChildrenDominator(M.HeapSnapshotDominatorNode node) {
+  static Iterable _getChildrenDominator(nodeDynamic) {
+    M.HeapSnapshotDominatorNode node = nodeDynamic;
     final list = node.children.toList();
     list.sort((a, b) => b.retainedSize - a.retainedSize);
     return list

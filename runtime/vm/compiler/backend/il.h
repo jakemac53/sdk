@@ -488,6 +488,7 @@ class EmbeddedArray<T, 0> {
   M(StaticCall)                                                                \
   M(LoadLocal)                                                                 \
   M(DropTemps)                                                                 \
+  M(MakeTemp)                                                                  \
   M(StoreLocal)                                                                \
   M(StrictCompare)                                                             \
   M(EqualityCompare)                                                           \
@@ -872,6 +873,11 @@ class Instruction : public ZoneAllocated {
 
 #undef INSTRUCTION_TYPE_CHECK
 #undef DECLARE_INSTRUCTION_TYPE_CHECK
+
+  template <typename T>
+  T* Cast() {
+    return static_cast<T*>(this);
+  }
 
   // Returns structure describing location constraints required
   // to emit native code for this instruction.
@@ -1641,7 +1647,8 @@ class CatchBlockEntryInstr : public BlockEntryInstr {
                        const LocalVariable& stacktrace_var,
                        bool needs_stacktrace,
                        intptr_t deopt_id,
-                       bool should_restore_closure_context = false)
+                       const LocalVariable* raw_exception_var,
+                       const LocalVariable* raw_stacktrace_var)
       : BlockEntryInstr(block_id, try_index, deopt_id),
         graph_entry_(graph_entry),
         predecessor_(NULL),
@@ -1649,8 +1656,9 @@ class CatchBlockEntryInstr : public BlockEntryInstr {
         catch_try_index_(catch_try_index),
         exception_var_(exception_var),
         stacktrace_var_(stacktrace_var),
+        raw_exception_var_(raw_exception_var),
+        raw_stacktrace_var_(raw_stacktrace_var),
         needs_stacktrace_(needs_stacktrace),
-        should_restore_closure_context_(should_restore_closure_context),
         handler_token_pos_(handler_token_pos),
         is_generated_(is_generated) {}
 
@@ -1668,6 +1676,11 @@ class CatchBlockEntryInstr : public BlockEntryInstr {
 
   const LocalVariable& exception_var() const { return exception_var_; }
   const LocalVariable& stacktrace_var() const { return stacktrace_var_; }
+
+  const LocalVariable* raw_exception_var() const { return raw_exception_var_; }
+  const LocalVariable* raw_stacktrace_var() const {
+    return raw_stacktrace_var_;
+  }
 
   bool needs_stacktrace() const { return needs_stacktrace_; }
 
@@ -1692,12 +1705,6 @@ class CatchBlockEntryInstr : public BlockEntryInstr {
     predecessor_ = predecessor;
   }
 
-  bool should_restore_closure_context() const {
-    ASSERT(exception_var_.is_captured() == stacktrace_var_.is_captured());
-    ASSERT(!exception_var_.is_captured() || should_restore_closure_context_);
-    return should_restore_closure_context_;
-  }
-
   GraphEntryInstr* graph_entry_;
   BlockEntryInstr* predecessor_;
   const Array& catch_handler_types_;
@@ -1705,8 +1712,9 @@ class CatchBlockEntryInstr : public BlockEntryInstr {
   GrowableArray<Definition*> initial_definitions_;
   const LocalVariable& exception_var_;
   const LocalVariable& stacktrace_var_;
+  const LocalVariable* raw_exception_var_;
+  const LocalVariable* raw_stacktrace_var_;
   const bool needs_stacktrace_;
-  const bool should_restore_closure_context_;
   TokenPosition handler_token_pos_;
   bool is_generated_;
 
@@ -2998,12 +3006,23 @@ class AssertBooleanInstr : public TemplateDefinition<1, Throws, Pure> {
 // the type arguments of a generic function or an arguments descriptor.
 class SpecialParameterInstr : public TemplateDefinition<0, NoThrow> {
  public:
-  enum SpecialParameterKind { kContext, kTypeArgs, kArgDescriptor };
+  enum SpecialParameterKind {
+    kContext,
+    kTypeArgs,
+    kArgDescriptor,
+    kException,
+    kStackTrace
+  };
 
-  SpecialParameterInstr(SpecialParameterKind kind, intptr_t deopt_id)
-      : TemplateDefinition(deopt_id), kind_(kind) {}
+  SpecialParameterInstr(SpecialParameterKind kind,
+                        intptr_t deopt_id,
+                        BlockEntryInstr* block)
+      : TemplateDefinition(deopt_id), kind_(kind), block_(block) {}
 
   DECLARE_INSTRUCTION(SpecialParameter)
+
+  virtual BlockEntryInstr* GetBlock() { return block_; }
+
   virtual CompileType ComputeType() const;
 
   virtual bool ComputeCanDeoptimize() const { return false; }
@@ -3027,6 +3046,10 @@ class SpecialParameterInstr : public TemplateDefinition<0, NoThrow> {
         return "kTypeArgs";
       case kArgDescriptor:
         return "kArgDescriptor";
+      case kException:
+        return "kException";
+      case kStackTrace:
+        return "kStackTrace";
     }
     UNREACHABLE();
     return NULL;
@@ -3034,6 +3057,7 @@ class SpecialParameterInstr : public TemplateDefinition<0, NoThrow> {
 
  private:
   const SpecialParameterKind kind_;
+  BlockEntryInstr* block_;
   DISALLOW_COPY_AND_ASSIGN(SpecialParameterInstr);
 };
 
@@ -3878,6 +3902,51 @@ class DropTempsInstr : public Definition {
   Value* value_;
 
   DISALLOW_COPY_AND_ASSIGN(DropTempsInstr);
+};
+
+// This instruction is used to reserve a space on the expression stack
+// that later would be filled with StoreLocal. Reserved space would be
+// filled with a null value initially.
+//
+// Note: One must not use Constant(#null) to reserve expression stack space
+// because it would lead to an incorrectly compiled unoptimized code. Graph
+// builder would set Constant(#null) as an input definition to the instruction
+// that consumes this value from the expression stack - not knowing that
+// this value represents a placeholder - which might lead issues if instruction
+// has specialization for constant inputs (see https://dartbug.com/33195).
+class MakeTempInstr : public TemplateDefinition<0, NoThrow, Pure> {
+ public:
+  explicit MakeTempInstr(Zone* zone)
+      : null_(new (zone) ConstantInstr(Object::ZoneHandle())) {
+    // Note: We put ConstantInstr inside MakeTemp to simplify code generation:
+    // having ConstantInstr allows us to use Location::Contant(null_) as an
+    // output location for this instruction.
+  }
+
+  DECLARE_INSTRUCTION(MakeTemp)
+
+  virtual CompileType ComputeType() const { return CompileType::Dynamic(); }
+
+  virtual bool ComputeCanDeoptimize() const { return false; }
+
+  virtual bool HasUnknownSideEffects() const {
+    UNREACHABLE();  // Eliminated by SSA construction.
+    return false;
+  }
+
+  virtual bool MayThrow() const {
+    UNREACHABLE();
+    return false;
+  }
+
+  virtual TokenPosition token_pos() const { return TokenPosition::kTempMove; }
+
+  PRINT_OPERANDS_TO_SUPPORT
+
+ private:
+  ConstantInstr* null_;
+
+  DISALLOW_COPY_AND_ASSIGN(MakeTempInstr);
 };
 
 class StoreLocalInstr : public TemplateDefinition<1, NoThrow> {

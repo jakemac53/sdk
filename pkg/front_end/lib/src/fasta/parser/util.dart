@@ -33,10 +33,40 @@ Token beforeCloseBraceTokenFor(BeginToken left) {
   return token;
 }
 
+/// Return [token] if it is non-synthetic,
+/// otherwise find the next non-synthetic token.
+/// This may return EOF if there are no more non-synthetic tokens in the stream.
+Token findNonSyntheticToken(Token token) {
+  while (token.isSynthetic && !token.isEof) {
+    token = token.next;
+  }
+  return token;
+}
+
 /// A null-aware alternative to `token.offset`.  If [token] is `null`, returns
 /// `TreeNode.noOffset`.
 int offsetForToken(Token token) {
   return token == null ? TreeNode.noOffset : token.offset;
+}
+
+/// Return true if the given token matches one of the given values.
+bool isOneOf(Token token, Iterable<String> values) {
+  for (String tokenValue in values) {
+    if (optional(tokenValue, token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Return true if the given token matches one of the given values or is EOF.
+bool isOneOfOrEof(Token token, Iterable<String> values) {
+  for (String tokenValue in values) {
+    if (optional(tokenValue, token)) {
+      return true;
+    }
+  }
+  return token.isEof;
 }
 
 /// A null-aware alternative to `token.length`.  If [token] is `null`, returns
@@ -69,7 +99,7 @@ Token skipMetadata(Token token) {
         next = token.next;
       }
     }
-    if (optional('(', next)) {
+    if (optional('(', next) && !next.endGroup.isSynthetic) {
       token = next.endGroup;
       next = token.next;
     }

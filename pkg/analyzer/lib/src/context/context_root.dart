@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analyzer/src/generated/utilities_general.dart';
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
 /**
@@ -11,6 +12,11 @@ import 'package:path/path.dart' as path;
  * Clients may not extend, implement or mix-in this class.
  */
 class ContextRoot {
+  /**
+   * The path context to use when manipulating paths.
+   */
+  final path.Context pathContext;
+
   /**
    * The absolute path of the root directory containing the files to be
    * analyzed.
@@ -33,7 +39,8 @@ class ContextRoot {
   /**
    * Initialize a newly created context root.
    */
-  ContextRoot(this.root, this.exclude);
+  ContextRoot(this.root, this.exclude, {@required path.Context pathContext})
+      : pathContext = pathContext ?? path.context;
 
   @override
   int get hashCode {
@@ -59,11 +66,11 @@ class ContextRoot {
    * directories.
    */
   bool containsFile(String filePath) {
-    if (!path.isWithin(root, filePath)) {
+    if (!pathContext.isWithin(root, filePath)) {
       return false;
     }
     for (String excluded in exclude) {
-      if (filePath == excluded || path.isWithin(excluded, filePath)) {
+      if (filePath == excluded || pathContext.isWithin(excluded, filePath)) {
         return false;
       }
     }

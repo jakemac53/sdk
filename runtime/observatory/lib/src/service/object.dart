@@ -460,6 +460,7 @@ abstract class Location implements M.Location {
   int get tokenPos;
   Future<int> getLine();
   Future<int> getColumn();
+  Future<String> toUserString();
 }
 
 /// A [SourceLocation] represents a location or range in the source code.
@@ -653,6 +654,7 @@ class _EventStreamState {
 abstract class VM extends ServiceObjectOwner implements M.VM {
   VM get vm => this;
   Isolate get isolate => null;
+  WebSocketVMTarget get target;
 
   // TODO(turnidge): The connection should not be stored in the VM object.
   bool get isDisconnected;
@@ -812,7 +814,7 @@ abstract class VM extends ServiceObjectOwner implements M.VM {
 
   // Note that this function does not reload the isolate if it found
   // in the cache.
-  Future<ServiceObject> getIsolate(String isolateId) {
+  Future<Isolate> getIsolate(String isolateId) {
     if (!loaded) {
       // Trigger a VM load, then get the isolate.
       return load().then((_) => getIsolate(isolateId)).catchError(_ignoreError);
@@ -961,7 +963,7 @@ abstract class VM extends ServiceObjectOwner implements M.VM {
   Future get onConnect;
 
   /// Completes when the VM disconnects or there was an error connecting.
-  Future get onDisconnect;
+  Future<String> get onDisconnect;
 
   void _update(Map map, bool mapIsRef) {
     name = map['name'];
@@ -1045,7 +1047,7 @@ class FakeVM extends VM {
 
   /// Force the VM to disconnect.
   void disconnect() {
-    _onDisconnect.complete(this);
+    _onDisconnect.complete('Disconnected');
   }
 
   // Always connected.
@@ -1060,8 +1062,8 @@ class FakeVM extends VM {
 
   bool get isConnected => !isDisconnected;
   // Only complete when requested.
-  Completer _onDisconnect = new Completer();
-  Future get onDisconnect => _onDisconnect.future;
+  Completer<String> _onDisconnect = new Completer<String>();
+  Future<String> get onDisconnect => _onDisconnect.future;
   bool get isDisconnected => _onDisconnect.isCompleted;
 
   Future<Map> invokeRpcRaw(String method, Map params) {
@@ -1076,6 +1078,9 @@ class FakeVM extends VM {
     }
     return new Future.value(response);
   }
+
+  @override
+  WebSocketVMTarget get target => throw new UnimplementedError();
 }
 
 /// Snapshot in time of tag counters.

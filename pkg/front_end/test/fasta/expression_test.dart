@@ -325,6 +325,7 @@ class CompileExpression extends Step<List<TestCase>, List<TestCase>, Context> {
             test.expression,
             definitions,
             typeParams,
+            "debugExpr",
             test.library,
             test.className,
             test.isStaticMethod);
@@ -369,7 +370,7 @@ Future<Context> createContext(
     };
 
   final ProcessedOptions options =
-      new ProcessedOptions(optionBuilder, false, [entryPoint]);
+      new ProcessedOptions(optionBuilder, [entryPoint]);
 
   final ExternalStateSnapshot snapshot =
       new ExternalStateSnapshot(await options.loadSdkSummary(null));

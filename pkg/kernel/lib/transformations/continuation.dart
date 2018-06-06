@@ -12,6 +12,17 @@ import '../visitor.dart';
 
 import 'async.dart';
 
+class ContinuationVariables {
+  static const awaitJumpVar = ':await_jump_var';
+  static const awaitContextVar = ':await_ctx_var';
+  static const exceptionParam = ':exception';
+  static const stackTraceParam = ':stack_trace';
+
+  static String savedTryContextVar(int depth) => ':saved_try_context_var$depth';
+  static String exceptionVar(int depth) => ':exception$depth';
+  static String stackTraceVar(int depth) => ':stack_trace$depth';
+}
+
 void transformLibraries(
     CoreTypes coreTypes, List<Library> libraries, bool syncAsync) {
   var helper = new HelperNodes.fromCoreTypes(coreTypes);
@@ -42,10 +53,10 @@ class RecursiveContinuationRewriter extends Transformer {
   final bool syncAsync;
 
   final VariableDeclaration asyncJumpVariable = new VariableDeclaration(
-      ":await_jump_var",
+      ContinuationVariables.awaitJumpVar,
       initializer: new IntLiteral(0));
   final VariableDeclaration asyncContextVariable =
-      new VariableDeclaration(":await_ctx_var");
+      new VariableDeclaration(ContinuationVariables.awaitContextVar);
 
   RecursiveContinuationRewriter(this.helper, this.syncAsync);
 
@@ -154,13 +165,15 @@ abstract class ContinuationRewriterBase extends RecursiveContinuationRewriter {
   }
 
   Iterable<VariableDeclaration> createCapturedTryVariables() =>
-      new Iterable.generate(capturedTryDepth,
-          (depth) => new VariableDeclaration(":saved_try_context_var${depth}"));
+      new Iterable.generate(
+          capturedTryDepth,
+          (depth) => new VariableDeclaration(
+              ContinuationVariables.savedTryContextVar(depth)));
 
   Iterable<VariableDeclaration> createCapturedCatchVariables() =>
       new Iterable.generate(capturedCatchDepth).expand((depth) => [
-            new VariableDeclaration(":exception${depth}"),
-            new VariableDeclaration(":stack_trace${depth}"),
+            new VariableDeclaration(ContinuationVariables.exceptionVar(depth)),
+            new VariableDeclaration(ContinuationVariables.stackTraceVar(depth)),
           ]);
 
   List<VariableDeclaration> variableDeclarations() =>
@@ -293,8 +306,8 @@ abstract class AsyncRewriterBase extends ContinuationRewriterBase {
     // }
     final parameters = <VariableDeclaration>[
       expressionRewriter.asyncResult,
-      new VariableDeclaration(':exception'),
-      new VariableDeclaration(':stack_trace'),
+      new VariableDeclaration(ContinuationVariables.exceptionParam),
+      new VariableDeclaration(ContinuationVariables.stackTraceParam),
     ];
 
     // Note: SyncYielding functions have no Dart equivalent. Since they are
@@ -956,12 +969,15 @@ class AsyncFunctionRewriter extends AsyncRewriterBase {
   FunctionNode rewrite() {
     var statements = <Statement>[];
 
-    // The original function return type should be Future<T> because the
-    // function is async. If it was, we make a Completer<T>.  Otherwise
-    // We will make a malformed type.
-    // In an "Future<FooBar> foo() async {}" function the body can either return
-    // a "FooBar" or a "Future<FooBar>" => a "FutureOr<FooBar>".
-    final DartType valueType = elementTypeFromReturnType(helper.futureClass);
+    // The original function return type should be Future<T> or FutureOr<T>
+    // because the function is async. If it was, we make a Completer<T>,
+    // otherwise we make a malformed type.  In a "Future<T> foo() async {}"
+    // function the body can either return a "T" or a "Future<T>" => a
+    // "FutureOr<T>".
+    DartType valueType = elementTypeFromReturnType(helper.futureClass);
+    if (valueType == const DynamicType()) {
+      valueType = elementTypeFromReturnType(helper.futureOrClass);
+    }
     final DartType returnType =
         new InterfaceType(helper.futureOrClass, <DartType>[valueType]);
     var completerTypeArguments = <DartType>[valueType];
@@ -969,8 +985,8 @@ class AsyncFunctionRewriter extends AsyncRewriterBase {
     if (syncAsync) {
       final completerType = new InterfaceType(
           helper.asyncAwaitCompleterClass, completerTypeArguments);
-      // final Completer<T> :completer = new _AsyncAwaitCompleter<T>();
-      completerVariable = new VariableDeclaration(":completer",
+      // final Completer<T> :async_completer = new _AsyncAwaitCompleter<T>();
+      completerVariable = new VariableDeclaration(":async_completer",
           initializer: new ConstructorInvocation(
               helper.asyncAwaitCompleterConstructor,
               new Arguments([], types: completerTypeArguments))
@@ -980,8 +996,8 @@ class AsyncFunctionRewriter extends AsyncRewriterBase {
     } else {
       final completerType =
           new InterfaceType(helper.completerClass, completerTypeArguments);
-      // final Completer<T> :completer = new Completer<T>.sync();
-      completerVariable = new VariableDeclaration(":completer",
+      // final Completer<T> :async_completer = new Completer<T>.sync();
+      completerVariable = new VariableDeclaration(":async_completer",
           initializer: new StaticInvocation(helper.completerConstructor,
               new Arguments([], types: completerTypeArguments))
             ..fileOffset = enclosingFunction.body?.fileOffset ?? -1,
@@ -996,7 +1012,7 @@ class AsyncFunctionRewriter extends AsyncRewriterBase {
     setupAsyncContinuations(statements);
 
     if (syncAsync) {
-      // :completer.start(:async_op);
+      // :async_completer.start(:async_op);
       var startStatement = new ExpressionStatement(new MethodInvocation(
           new VariableGet(completerVariable),
           new Name('start'),
@@ -1012,7 +1028,7 @@ class AsyncFunctionRewriter extends AsyncRewriterBase {
         ..fileOffset = enclosingFunction.fileOffset);
       statements.add(newMicrotaskStatement);
     }
-    // return :completer.future;
+    // return :async_completer.future;
     var completerGet = new VariableGet(completerVariable);
     var returnStatement = new ReturnStatement(new PropertyGet(completerGet,
         new Name('future', helper.asyncLibrary), helper.completerFuture));

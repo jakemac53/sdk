@@ -4,6 +4,7 @@
 
 library dart2js.kernel.element_map;
 
+import 'package:front_end/src/fasta/util/link.dart' show Link, LinkBuilder;
 import 'package:kernel/ast.dart' as ir;
 import 'package:kernel/class_hierarchy.dart' as ir;
 import 'package:kernel/core_types.dart' as ir;
@@ -20,7 +21,6 @@ import '../constants/constructors.dart';
 import '../constants/evaluation.dart';
 import '../constants/expressions.dart';
 import '../constants/values.dart';
-import '../elements/elements.dart';
 import '../elements/entities.dart';
 import '../elements/entity_utils.dart' as utils;
 import '../elements/names.dart';
@@ -47,7 +47,6 @@ import '../universe/class_hierarchy_builder.dart';
 import '../universe/class_set.dart';
 import '../universe/selector.dart';
 import '../universe/world_builder.dart';
-import '../util/util.dart' show Link, LinkBuilder;
 import '../world.dart';
 import 'element_map.dart';
 import 'element_map_mixins.dart';
@@ -312,11 +311,12 @@ abstract class KernelToElementMapBase extends KernelToElementMapBaseMixin {
         node.implementedTypes.forEach((ir.Supertype supertype) {
           linkBuilder.addLast(processSupertype(supertype));
         });
-        Link<InterfaceType> interfaces = linkBuilder.toLink();
+        Link<InterfaceType> interfaces =
+            linkBuilder.toLink(const Link<InterfaceType>());
         OrderedTypeSetBuilder setBuilder =
             new _KernelOrderedTypeSetBuilder(this, cls);
         data.orderedTypeSet = setBuilder.createOrderedTypeSet(
-            data.supertype, interfaces.reverse());
+            data.supertype, interfaces.reverse(const Link<InterfaceType>()));
         data.interfaces = new List<InterfaceType>.from(interfaces.toList());
       }
     }
@@ -480,7 +480,7 @@ abstract class KernelToElementMapBase extends KernelToElementMapBaseMixin {
     }
 
     return new FunctionType(returnType, parameterTypes, optionalParameterTypes,
-        namedParameters, namedParameterTypes, typeVariables, null);
+        namedParameters, namedParameterTypes, typeVariables);
   }
 
   @override
@@ -615,15 +615,10 @@ abstract class KernelToElementMapBase extends KernelToElementMapBaseMixin {
             ..sort((a, b) => a.compareTo(b));
           List<DartType> namedParameterTypes =
               new List.filled(namedParameters.length, dynamic);
-          data.callType = new FunctionType(
-              dynamic,
-              requiredParameterTypes,
-              optionalParameterTypes,
-              namedParameters,
-              namedParameterTypes,
+          data.callType = new FunctionType(dynamic, requiredParameterTypes,
+              optionalParameterTypes, namedParameters, namedParameterTypes,
               // TODO(johnniwinther): Generate existential types here.
-              const <FunctionTypeVariable>[],
-              null);
+              const <FunctionTypeVariable>[]);
         } else {
           // The function type is not valid.
           data.callType = const DynamicType();
@@ -842,6 +837,9 @@ abstract class KernelToElementMapBase extends KernelToElementMapBaseMixin {
 
 /// Mixin that implements the abstract methods in [KernelToElementMapBase].
 abstract class ElementCreatorMixin implements KernelToElementMapBase {
+  /// Set to `true` before creating the J-World from the K-World to assert that
+  /// no entities are created late.
+  bool _envIsClosed = false;
   ProgramEnv get _env;
   EntityDataEnvMap<IndexedLibrary, LibraryData, LibraryEnv> get _libraries;
   EntityDataEnvMap<IndexedClass, ClassData, ClassEnv> get _classes;
@@ -886,6 +884,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   LibraryEntity _getLibrary(ir.Library node, [LibraryEnv libraryEnv]) {
     return _libraryMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "library for $node.");
       Uri canonicalUri = node.importUri;
       String name = node.name;
       if (name == null) {
@@ -901,6 +903,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   ClassEntity _getClass(ir.Class node, [ClassEnv classEnv]) {
     return _classMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "class for $node.");
       KLibrary library = _getLibrary(node.enclosingLibrary);
       if (classEnv == null) {
         classEnv = _libraries.getEnv(library).lookupClass(node.name);
@@ -914,6 +920,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   TypedefEntity _getTypedef(ir.Typedef node) {
     return _typedefMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "typedef for $node.");
       IndexedLibrary library = _getLibrary(node.enclosingLibrary);
       IndexedTypedef typedef = createTypedef(library, node.name);
       TypedefType typedefType = new TypedefType(
@@ -927,6 +937,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   TypeVariableEntity _getTypeVariable(ir.TypeParameter node) {
     return _typeVariableMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "type variable for $node.");
       if (node.parent is ir.Class) {
         ir.Class cls = node.parent;
         int index = cls.typeParameters.indexOf(node);
@@ -963,6 +977,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   ConstructorEntity _getConstructor(ir.Member node) {
     return _constructorMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "constructor for $node.");
       MemberDefinition definition;
       ir.FunctionNode functionNode;
       ClassEntity enclosingClass = _getClass(node.enclosingClass);
@@ -1000,6 +1018,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   FunctionEntity _getMethod(ir.Procedure node) {
     return _methodMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "function for $node.");
       LibraryEntity library;
       ClassEntity enclosingClass;
       if (node.enclosingClass != null) {
@@ -1049,6 +1071,10 @@ abstract class ElementCreatorMixin implements KernelToElementMapBase {
 
   FieldEntity _getField(ir.Field node) {
     return _fieldMap.putIfAbsent(node, () {
+      assert(
+          !_envIsClosed,
+          "Environment of $this is closed. Trying to create "
+          "field for $node.");
       LibraryEntity library;
       ClassEntity enclosingClass;
       if (node.enclosingClass != null) {
@@ -1691,29 +1717,12 @@ class KernelElementEnvironment extends ElementEnvironment {
   }
 
   @override
-  Iterable<ConstantValue> getTypedefMetadata(TypedefEntity typedef) {
-    // TODO(redemption): Support this.
-    throw new UnsupportedError('ElementEnvironment.getTypedefMetadata');
-  }
-
-  @override
   Iterable<ConstantValue> getMemberMetadata(covariant IndexedMember member,
       {bool includeParameterMetadata: false}) {
     // TODO(redemption): Support includeParameterMetadata.
     assert(elementMap.checkFamily(member));
     MemberData memberData = elementMap._members.getData(member);
     return memberData.getMetadata(elementMap);
-  }
-
-  @override
-  FunctionType getFunctionTypeOfTypedef(TypedefEntity typedef) {
-    // TODO(redemption): Support this.
-    throw new UnsupportedError('ElementEnvironment.getFunctionTypeOfTypedef');
-  }
-
-  @override
-  TypedefType getTypedefTypeOfTypedef(TypedefEntity typedef) {
-    return elementMap._typedefs.getData(typedef).rawType;
   }
 
   @override
@@ -1796,9 +1805,6 @@ class DartTypeConverter extends ir.DartTypeVisitor<DartType> {
       }
     }
 
-    DartType typedefType =
-        node.typedef == null ? null : elementMap.getTypedefType(node.typedef);
-
     FunctionType type = new FunctionType(
         visitType(node.returnType),
         visitTypes(node.positionalParameters
@@ -1809,8 +1815,7 @@ class DartTypeConverter extends ir.DartTypeVisitor<DartType> {
             .toList()),
         node.namedParameters.map((n) => n.name).toList(),
         node.namedParameters.map((n) => visitType(n.type)).toList(),
-        typeVariables ?? const <FunctionTypeVariable>[],
-        typedefType);
+        typeVariables ?? const <FunctionTypeVariable>[]);
     for (ir.TypeParameter typeParameter in node.typeParameters) {
       currentFunctionTypeParameters.remove(typeParameter);
     }
@@ -1882,19 +1887,7 @@ class KernelConstantEnvironment implements ConstantEnvironment {
   KernelConstantEnvironment(this._elementMap, this._environment);
 
   @override
-  ConstantSystem get constantSystem => const JavaScriptConstantSystem();
-
-  @override
-  ConstantValue getConstantValueForVariable(VariableElement element) {
-    throw new UnimplementedError(
-        "KernelConstantEnvironment.getConstantValueForVariable");
-  }
-
-  @override
-  ConstantValue getConstantValue(ConstantExpression expression) {
-    return _getConstantValue(CURRENT_ELEMENT_SPANNABLE, expression,
-        constantRequired: true);
-  }
+  ConstantSystem get constantSystem => JavaScriptConstantSystem.only;
 
   ConstantValue _getConstantValue(
       Spannable spannable, ConstantExpression expression,
@@ -1905,11 +1898,6 @@ class KernelConstantEnvironment implements ConstantEnvironment {
               constantRequired: constantRequired),
           constantSystem);
     });
-  }
-
-  @override
-  bool hasConstantValue(ConstantExpression expression) {
-    throw new UnimplementedError("KernelConstantEnvironment.hasConstantValue");
   }
 }
 
@@ -1983,7 +1971,6 @@ class KernelResolutionWorldBuilder extends KernelResolutionWorldBuilderBase {
             elementMap.elementEnvironment,
             elementMap.types,
             elementMap.commonElements,
-            elementMap._constantEnvironment.constantSystem,
             nativeBasicData,
             nativeDataBuilder,
             interceptorDataBuilder,
@@ -2076,63 +2063,95 @@ abstract class KernelClosedWorldMixin implements ClosedWorldBase {
       true;
 
   @override
-  bool checkClass(ClassEntity cls) => true;
-
-  @override
   bool checkEntity(Entity element) => true;
 }
 
-class KernelClosedWorld extends ClosedWorldBase
-    with KernelClosedWorldMixin, ClosedWorldRtiNeedMixin {
+class KClosedWorldImpl extends ClosedWorldRtiNeedMixin implements KClosedWorld {
   final KernelToElementMapForImpactImpl elementMap;
+  final ElementEnvironment elementEnvironment;
+  final DartTypes dartTypes;
+  final CommonElements commonElements;
+  final NativeData nativeData;
+  final InterceptorData interceptorData;
+  final BackendUsage backendUsage;
+  final NoSuchMethodData noSuchMethodData;
 
-  KernelClosedWorld(this.elementMap,
+  final Map<ClassEntity, Set<ClassEntity>> mixinUses;
+
+  final Map<ClassEntity, Set<ClassEntity>> typesImplementedBySubclasses;
+
+  final Map<ClassEntity, ClassHierarchyNode> _classHierarchyNodes;
+  final Map<ClassEntity, ClassSet> _classSets;
+
+  // TODO(johnniwinther): Can this be derived from [ClassSet]s?
+  final Set<ClassEntity> _implementedClasses;
+
+  final Iterable<MemberEntity> liveInstanceMembers;
+
+  /// Members that are written either directly or through a setter selector.
+  final Iterable<MemberEntity> assignedInstanceMembers;
+
+  final Iterable<ClassEntity> liveNativeClasses;
+
+  final Iterable<MemberEntity> processedMembers;
+
+  KClosedWorldImpl(this.elementMap,
       {CompilerOptions options,
-      ElementEnvironment elementEnvironment,
-      DartTypes dartTypes,
-      CommonElements commonElements,
-      ConstantSystem constantSystem,
-      NativeData nativeData,
-      InterceptorData interceptorData,
-      BackendUsage backendUsage,
-      NoSuchMethodData noSuchMethodData,
+      this.elementEnvironment,
+      this.dartTypes,
+      this.commonElements,
+      this.nativeData,
+      this.interceptorData,
+      this.backendUsage,
+      this.noSuchMethodData,
       ResolutionWorldBuilder resolutionWorldBuilder,
       RuntimeTypesNeedBuilder rtiNeedBuilder,
       Set<ClassEntity> implementedClasses,
-      Iterable<ClassEntity> liveNativeClasses,
-      Iterable<MemberEntity> liveInstanceMembers,
-      Iterable<MemberEntity> assignedInstanceMembers,
-      Iterable<MemberEntity> processedMembers,
-      Set<TypedefEntity> allTypedefs,
-      Map<ClassEntity, Set<ClassEntity>> mixinUses,
-      Map<ClassEntity, Set<ClassEntity>> typesImplementedBySubclasses,
+      this.liveNativeClasses,
+      this.liveInstanceMembers,
+      this.assignedInstanceMembers,
+      this.processedMembers,
+      this.mixinUses,
+      this.typesImplementedBySubclasses,
       Map<ClassEntity, ClassHierarchyNode> classHierarchyNodes,
       Map<ClassEntity, ClassSet> classSets})
-      : super(
-            elementEnvironment,
-            dartTypes,
-            commonElements,
-            constantSystem,
-            nativeData,
-            interceptorData,
-            backendUsage,
-            noSuchMethodData,
-            implementedClasses,
-            liveNativeClasses,
-            liveInstanceMembers,
-            assignedInstanceMembers,
-            processedMembers,
-            allTypedefs,
-            mixinUses,
-            typesImplementedBySubclasses,
-            classHierarchyNodes,
-            classSets) {
+      : _implementedClasses = implementedClasses,
+        _classHierarchyNodes = classHierarchyNodes,
+        _classSets = classSets {
     computeRtiNeed(resolutionWorldBuilder, rtiNeedBuilder, options);
   }
 
-  @override
-  void registerClosureClass(ClassEntity cls) {
-    throw new UnsupportedError('KernelClosedWorld.registerClosureClass');
+  /// Returns `true` if [cls] is implemented by an instantiated class.
+  bool isImplemented(ClassEntity cls) {
+    return _implementedClasses.contains(cls);
+  }
+
+  /// Returns [ClassHierarchyNode] for [cls] used to model the class hierarchies
+  /// of known classes.
+  ///
+  /// This method is only provided for testing. For queries on classes, use the
+  /// methods defined in [JClosedWorld].
+  ClassHierarchyNode getClassHierarchyNode(ClassEntity cls) {
+    return _classHierarchyNodes[cls];
+  }
+
+  /// Returns [ClassSet] for [cls] used to model the extends and implements
+  /// relations of known classes.
+  ///
+  /// This method is only provided for testing. For queries on classes, use the
+  /// methods defined in [JClosedWorld].
+  ClassSet getClassSet(ClassEntity cls) {
+    return _classSets[cls];
+  }
+
+  /// Applies [f] to each live class that implements [cls] _not_ including [cls]
+  /// itself.
+  void forEachStrictSubtypeOf(
+      ClassEntity cls, IterationStep f(ClassEntity cls)) {
+    ClassSet classSet = _classSets[cls];
+    if (classSet == null) return;
+    classSet.forEachSubtype(f, ClassHierarchyNode.EXPLICITLY_INSTANTIATED,
+        strict: true);
   }
 }
 
@@ -2388,6 +2407,11 @@ class JsKernelToElementMap extends KernelToElementMapBase
       assert(newTypeVariable.typeVariableIndex ==
           oldTypeVariable.typeVariableIndex);
     }
+    // TODO(johnniwinther): We should close the environment in the beginning of
+    // this constructor but currently we need the [MemberEntity] to query if the
+    // member is live, thus potentially creating the [MemberEntity] in the
+    // process. Avoid this.
+    _elementMap._envIsClosed = true;
   }
 
   @override
@@ -2898,7 +2922,7 @@ class JsKernelToElementMap extends KernelToElementMapBase
       } else if (node is ir.FunctionDeclaration) {
         String name = node.variable.name;
         if (name != null && name != "") {
-          parts.add(Elements.operatorNameToIdentifier(name));
+          parts.add(utils.operatorNameToIdentifier(name));
         } else {
           parts.add(anonymous);
           anonymous = '';
@@ -2911,7 +2935,7 @@ class JsKernelToElementMap extends KernelToElementMapBase
         if (node.kind == ir.ProcedureKind.Factory) {
           parts.add(utils.reconstructConstructorName(getMember(node)));
         } else {
-          parts.add(Elements.operatorNameToIdentifier(node.name.name));
+          parts.add(utils.operatorNameToIdentifier(node.name.name));
         }
       } else if (node is ir.Constructor) {
         parts.add(utils.reconstructConstructorName(getMember(node)));
@@ -2938,12 +2962,13 @@ class JsKernelToElementMap extends KernelToElementMapBase
   }
 
   JGeneratorBody getGeneratorBody(covariant IndexedFunction function) {
-    FunctionData functionData = _members.getData(function);
-    ir.TreeNode node = functionData.definition.node;
-    // TODO(sra): Maybe store this in the FunctionData.
     JGeneratorBody generatorBody = _generatorBodies[function];
     if (generatorBody == null) {
-      generatorBody = createGeneratorBody(function);
+      FunctionData functionData = _members.getData(function);
+      ir.TreeNode node = functionData.definition.node;
+      DartType elementType =
+          _elementEnvironment.getFunctionAsyncOrSyncStarElementType(function);
+      generatorBody = createGeneratorBody(function, elementType);
       _members.register<IndexedFunction, FunctionData>(
           generatorBody,
           new GeneratorBodyFunctionData(
@@ -2960,7 +2985,8 @@ class JsKernelToElementMap extends KernelToElementMapBase
     return generatorBody;
   }
 
-  JGeneratorBody createGeneratorBody(FunctionEntity function);
+  JGeneratorBody createGeneratorBody(
+      FunctionEntity function, DartType elementType);
 }
 
 class KernelClassQueries extends ClassQueries {

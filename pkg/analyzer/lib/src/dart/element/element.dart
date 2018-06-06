@@ -1281,7 +1281,7 @@ class ClassElementImpl extends AbstractClassElementImpl
         if (_kernel.mixedInType != null) {
           _kernelMixins.add(_kernel.mixedInType);
         }
-        while (supertype.classNode.isSyntheticMixinImplementation) {
+        while (supertype.classNode.isAnonymousMixin) {
           var superNode = supertype.classNode;
           var substitute = kernel.Substitution.fromSupertype(supertype);
 
@@ -1855,7 +1855,7 @@ class CompilationUnitElementImpl extends UriReferencedElementImpl
   List<ClassElement> get types {
     if (_kernelContext != null) {
       _types ??= _kernelContext.kernelUnit.classes
-          .where((k) => !k.isEnum && !k.isSyntheticMixinImplementation)
+          .where((k) => !k.isEnum && !k.isAnonymousMixin)
           .map((k) => new ClassElementImpl.forKernel(this, k))
           .toList(growable: false);
     }
@@ -4411,8 +4411,7 @@ abstract class ExecutableElementImpl extends ElementImpl
   @override
   FunctionType get type {
     if (_kernel != null || serializedExecutable != null) {
-      _type ??= new FunctionTypeImpl.elementWithNameAndArgs(
-          this, null, allEnclosingTypeParameterTypes, false);
+      _type ??= new FunctionTypeImpl(this);
     }
     return _type;
   }
@@ -5155,8 +5154,7 @@ class FunctionElementImpl_forLUB extends FunctionElementImpl {
 
   @override
   FunctionType get type {
-    return _type ??=
-        new FunctionTypeImpl.elementWithNameAndArgs(this, null, null, false);
+    return _type ??= new FunctionTypeImpl(this);
   }
 
   @override
@@ -5299,8 +5297,7 @@ class GenericFunctionTypeElementImpl extends ElementImpl
 
   @override
   FunctionType get type {
-    _type ??= new FunctionTypeImpl.elementWithNameAndArgs(
-        this, null, allEnclosingTypeParameterTypes, false);
+    _type ??= new FunctionTypeImpl(this);
     return _type;
   }
 

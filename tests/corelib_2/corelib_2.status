@@ -4,6 +4,14 @@
 iterable_where_type_test: RuntimeError # Disabled.  Issue 32463
 maps_test: Skip # Maps class no longer exists
 
+[ $compiler == app_jitk ]
+symbol_operator_test/03: RuntimeError
+symbol_reserved_word_test/06: RuntimeError
+symbol_reserved_word_test/09: RuntimeError
+symbol_reserved_word_test/12: RuntimeError
+symbol_test/none: RuntimeError
+unicode_test: RuntimeError
+
 [ $compiler == dart2analyzer ]
 bigint_from_test: CompileTimeError # Issue 32585
 compare_to2_test: CompileTimeError # invalid test
@@ -12,11 +20,11 @@ iterable_element_at_test/static: Pass
 num_sign_test: Crash, Pass # Issue 31768
 
 [ $compiler == dart2js ]
+apply_generic_function_test: RuntimeError # Issue 32691
 bigint_from_test: RuntimeError # Issue 32589
 date_time11_test: RuntimeError, Pass # Fails when US is on winter time, issue 31285.
 iterable_where_type_test: RuntimeError # issue 31718
 list_unmodifiable_test: Pass, RuntimeError # Issue 28712
-apply_generic_function_test: RuntimeError # Issue 32691
 
 [ $compiler != dartdevc ]
 error_stack_trace_test/static: MissingCompileTimeError
@@ -26,7 +34,6 @@ bigint_from_test: RuntimeError # Issue 32589
 bool_from_environment2_test/03: Crash
 int_modulo_arith_test/modPow: RuntimeError
 int_modulo_arith_test/none: RuntimeError
-null_test: RuntimeError # Issue 32194
 string_from_environment3_test/03: Crash
 
 [ $compiler == precompiler ]
@@ -93,9 +100,23 @@ integer_parsed_mul_div_vm_test: Pass, Slow
 [ $arch == x64 && $system == windows ]
 stopwatch_test: Skip # Flaky test due to expected performance behaviour.
 
-[ $arch == simarm || $arch == simarm64 || $arch == simdbc64 ]
-bigint_parse_radix_test: Pass, Slow # Bigint computations are slow on simulated architectures.
-bigint_test: Pass, Slow # Bigint computations are slow on simulated architectures.
+# All static_tests have expected compile-time errors.
+[ $compiler != app_jitk && $compiler != dart2analyzer && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta && $strong ]
+core_runtime_types_static_test: MissingCompileTimeError
+splay_tree_test/01: MissingCompileTimeError
+splay_tree_test/02: MissingCompileTimeError
+string_base_vm_static_test: MissingCompileTimeError
+string_replace_static_test: MissingCompileTimeError
+string_static_test: MissingCompileTimeError
+
+[ $compiler != app_jitk && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta ]
+iterable_element_at_test/static: MissingCompileTimeError
+
+[ $compiler != app_jitk && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta && ($compiler != dart2analyzer || !$strong) ]
+iterable_mapping_test/01: MissingCompileTimeError
+
+[ $compiler != app_jitk && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $runtime != none ]
+map_keys2_test: RuntimeError # needs Dart 2 is checks
 
 [ $compiler == dart2analyzer && !$checked && !$strong ]
 from_environment_const_type_test/02: MissingCompileTimeError
@@ -127,19 +148,11 @@ from_environment_const_type_undefined_test/16: MissingCompileTimeError
 int_parse_radix_bad_handler_test: Pass
 
 [ $compiler == dart2analyzer && !$strong ]
+regress_33166_test: StaticWarning # Not a Dart 1 test
 symbol_reserved_word_test/05: MissingCompileTimeError # Issue 30245
 
 [ $compiler != dart2analyzer && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk ]
 bigint_js_test: SkipByDesign # JavaScript-specific test
-
-# All static_tests have expected compile-time errors.
-[ $compiler != dart2analyzer && $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta && $strong ]
-core_runtime_types_static_test: MissingCompileTimeError
-splay_tree_test/01: MissingCompileTimeError
-splay_tree_test/02: MissingCompileTimeError
-string_base_vm_static_test: MissingCompileTimeError
-string_replace_static_test: MissingCompileTimeError
-string_static_test: MissingCompileTimeError
 
 [ $compiler == dart2js && $runtime == chromeOnAndroid ]
 list_as_map_test: Pass, Slow # TODO(kasperl): Please triage.
@@ -194,10 +207,6 @@ list_test/01: Crash # Unsupported operation: Unsupported type parameter type nod
 list_test/none: Crash # Unsupported operation: Unsupported type parameter type node T.
 map_test: Crash # tests/corelib_2/map_test.dart:903:7: Internal problem: Unhandled Null in installDefaultConstructor.
 symbol_reserved_word_test/03: RuntimeError # Issue 19972, new Symbol('void') should be allowed.
-
-[ $compiler == dart2js && $fast_startup ]
-apply3_test: RuntimeError
-dynamic_nosuchmethod_test: RuntimeError
 
 [ $compiler == dart2js && $fast_startup && $fasta && $strong ]
 cast_test: RuntimeError
@@ -278,15 +287,6 @@ uri_test: RuntimeError
 [ $compiler == dart2js && !$fasta ]
 *: SkipByDesign
 
-[ $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta ]
-iterable_element_at_test/static: MissingCompileTimeError
-
-[ $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $compiler != fasta && ($compiler != dart2analyzer || !$strong) ]
-iterable_mapping_test/01: MissingCompileTimeError
-
-[ $compiler != dart2js && $compiler != dartdevc && $compiler != dartdevk && $compiler != dartk && $compiler != dartkp && $runtime != none ]
-map_keys2_test: RuntimeError # needs Dart 2 is checks
-
 [ $compiler != dart2js && $fasta ]
 bool_from_environment2_test/03: MissingCompileTimeError
 string_from_environment3_test/03: MissingCompileTimeError
@@ -304,9 +304,14 @@ string_base_vm_static_test: MissingCompileTimeError
 string_replace_static_test: MissingCompileTimeError
 string_static_test: MissingCompileTimeError
 
+[ $compiler == dartk && $mode == debug && $hot_reload ]
+map_test: Crash
+
+[ $compiler == dartk && $mode == release && $hot_reload ]
+bigint_parse_radix_test: Crash
+
 # ===== dartk + vm status lines =====
 [ $compiler == dartk && $runtime == vm && $strong ]
-apply_generic_function_test: RuntimeError
 iterable_fold_test/02: RuntimeError
 iterable_reduce_test/01: CompileTimeError # Issue 31533
 iterable_reduce_test/none: RuntimeError
@@ -321,7 +326,6 @@ unicode_test: RuntimeError # Issue 18061: German double S.
 apply_test/01: RuntimeError
 
 [ $compiler == dartkp && $runtime == dart_precompiled && $strong ]
-apply_generic_function_test: RuntimeError
 iterable_fold_test/02: RuntimeError
 iterable_reduce_test/01: CompileTimeError # Issue 31533
 iterable_reduce_test/none: RuntimeError
@@ -395,13 +399,13 @@ double_round_test/int64: RuntimeError, OK # Requires fixed-size int64 support.
 double_truncate_test/int64: RuntimeError, OK # Requires fixed-size int64 support.
 hash_set_test/01: RuntimeError # non JS number semantics - Issue 11551
 int_modulo_arith_test/modPow: RuntimeError # Issue 29921
-int_parse_with_limited_ints_test: Skip # dart2js and dartdevc don't know about --limit-ints-to-64-bits
+int_parse_with_limited_ints_test: Skip # Requires fixed-size int64 support.
 integer_arith_vm_test/modPow: RuntimeError # Issues 10245, 30170
 integer_parsed_arith_vm_test: RuntimeError # Issues 10245, 29921
 integer_parsed_div_rem_vm_test: RuntimeError # Issue 29921
 integer_parsed_mul_div_vm_test: RuntimeError # Issue 29921
 regress_r21715_test: RuntimeError # Requires fixed-size int64 support.
-typed_data_with_limited_ints_test: Skip # dart2js and dartdevc don't know about --limit-ints-to-64-bits
+typed_data_with_limited_ints_test: Skip # Requires fixed-size int64 support.
 
 [ $runtime != none && ($compiler == dartdevc || $compiler == dartdevk) ]
 bigint_test: Pass, Slow
@@ -412,7 +416,7 @@ hash_set_test/01: RuntimeError # Issue 29921
 int_modulo_arith_test/none: RuntimeError # Issue 29921
 int_parse_radix_test/01: RuntimeError # Issue 29921
 int_parse_radix_test/02: RuntimeError # Issue 29921
-int_parse_with_limited_ints_test: Skip # dartdevc doesn't know about --limit-ints-to-64-bits
+int_parse_with_limited_ints_test: Skip # Requires fixed-size int64 support.
 integer_arith_vm_test/modPow: RuntimeError # Issue 30170
 integer_parsed_arith_vm_test: RuntimeError # Issue 29921
 integer_to_radix_string_test: RuntimeError # Issue 29921
@@ -468,7 +472,7 @@ symbol_reserved_word_test/06: RuntimeError # Issue 29921
 symbol_reserved_word_test/09: RuntimeError # Issue 29921
 symbol_reserved_word_test/12: RuntimeError # Issue 29921
 symbol_test/none: RuntimeError # Issue 29921
-typed_data_with_limited_ints_test: Skip # dartdevc doesn't know about --limit-ints-to-64-bits
+typed_data_with_limited_ints_test: Skip # Requires fixed-size int64 support.
 
 [ $runtime == vm && !$strong ]
 collection_of_test: RuntimeError
@@ -539,6 +543,10 @@ symbol_test/01: MissingCompileTimeError
 
 [ !$strong && ($runtime == dart_precompiled || $runtime == vm) ]
 list_test/*: RuntimeError # VM doesn't implement strong mode covariance checks
+
+[ $arch == simarm || $arch == simarm64 || $arch == simdbc64 ]
+bigint_parse_radix_test: Pass, Slow # Bigint computations are slow on simulated architectures.
+bigint_test: Pass, Slow # Bigint computations are slow on simulated architectures.
 
 [ $arch == simdbc || $arch == simdbc64 ]
 regexp/stack-overflow_test: RuntimeError, OK # Smaller limit with irregex interpreter

@@ -293,6 +293,7 @@ html/serialized_script_value_test: RuntimeError
 html/shadow_dom_test: RuntimeError
 html/shadowroot_test: RuntimeError
 html/speechrecognition_test: RuntimeError
+html/storage_promise_test: RuntimeError
 html/storage_test: RuntimeError
 html/streams_test: RuntimeError
 html/svg_test: RuntimeError
@@ -341,7 +342,6 @@ collection/list_test: RuntimeError
 html/fontface_loaded_test: RuntimeError
 html/html_mock_test: RuntimeError # Issue 31038
 html/input_element_attributes_test: RuntimeError
-html/interactive_media_test: RuntimeError
 html/js_dart_functions_test: RuntimeError # does not implement Dart 2 implicit `.call` tearoff
 html/js_extend_class_test: RuntimeError
 
@@ -371,6 +371,7 @@ html/history_test/history: Skip # Issue 22050
 html/input_element_datetime_test: Fail
 html/input_element_month_test: Fail
 html/input_element_week_test: Fail
+html/interactive_media_test: RuntimeError # Not supported in FF
 html/media_stream_test: Fail
 html/messageevent_test: Pass, RuntimeError # Issue 28983
 html/request_animation_frame_test: Skip # Async test hangs.
@@ -462,6 +463,7 @@ html/element_types_shadow_test: RuntimeError # Issue 29922
 html/file_sample_test: Skip # FileSystem not supported on Safari.
 html/fileapi_supported_throws_test: Skip # FileSystem not supported on Safari
 html/js_mock_test: RuntimeError # Issue 32286
+html/storage_promise_test: RuntimeError # Not supported on Safari
 html/xhr_test: RuntimeError
 
 [ $compiler == dart2js && $system == linux ]
@@ -488,9 +490,6 @@ html/js_function_getter_trust_types_test: Skip # --trust-type-annotations incomp
 
 [ $compiler == dart2js && $checked && $fasta ]
 async/stream_listen_zone_test: RuntimeError
-
-[ $compiler == dart2js && !$checked ]
-async/async_await_sync_completer_test: RuntimeError
 
 [ $compiler == dart2js && $csp && $fasta && $minified ]
 collection/list_test: RuntimeError
@@ -687,10 +686,9 @@ html/js_typed_interop_default_arg_test/explicit_argument: RuntimeError
 html/js_typed_interop_test: RuntimeError
 
 [ $compiler == dart2js && $fasta && $host_checked ]
-async/stream_controller_async_test: Crash
 html/custom/mirrors_2_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
 html/custom/mirrors_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
-html/fontface_loaded_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
+html/fontface_loaded_test: RuntimeError # TypeError: Cannot read property 'createFragment$3$treeSanitizer$validator' of undefined
 html/indexeddb_3_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
 html/indexeddb_5_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
 html/js_array_test: CompileTimeError
@@ -700,8 +698,6 @@ html/js_function_getter_trust_types_test: CompileTimeError
 html/js_typed_interop_default_arg_test/explicit_argument: CompileTimeError
 html/js_typed_interop_side_cast_exp_test: Crash # 'file:*/pkg/compiler/lib/src/common_elements.dart': Failed assertion: line 405 pos 12: 'element.name == '=='': is not true.
 html/js_typed_interop_test: CompileTimeError
-typed_data/typed_data_list_test: Crash
-typed_data/typed_list_iterable_test: Crash
 
 [ $compiler == dart2js && $fasta && $minified ]
 html/audiobuffersourcenode_test/functional: RuntimeError

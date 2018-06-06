@@ -289,7 +289,7 @@ void SimulatorDebugger::PrintDartFrame(uword pc,
 void SimulatorDebugger::PrintBacktrace() {
   StackFrameIterator frames(
       sim_->get_register(FP), sim_->get_register(SP), sim_->get_pc(),
-      StackFrameIterator::kDontValidateFrames, Thread::Current(),
+      ValidationPolicy::kDontValidateFrames, Thread::Current(),
       StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = frames.NextFrame();
   ASSERT(frame != NULL);
@@ -1651,8 +1651,11 @@ void Simulator::DecodeExceptionGen(Instr* instr) {
     SimulatorDebugger dbg(this);
     int32_t imm = instr->Imm16Field();
     if (imm == Instr::kStopMessageCode) {
-      const char* message = *reinterpret_cast<const char**>(
-          reinterpret_cast<intptr_t>(instr) - 2 * Instr::kInstrSize);
+      const char* message = "Stop messages not enabled";
+      if (FLAG_print_stop_message) {
+        message = *reinterpret_cast<const char**>(
+            reinterpret_cast<intptr_t>(instr) - 2 * Instr::kInstrSize);
+      }
       set_pc(get_pc() + Instr::kInstrSize);
       dbg.Stop(instr, message);
     } else {
@@ -2552,7 +2555,7 @@ void Simulator::DecodeMiscDP3Source(Instr* instr) {
       const int32_t alu_out = ra_val - (rn_val * rm_val);
       set_wregister(rd, alu_out, R31IsZR);
     }
-  } else if ((instr->Bits(29, 2) == 0) && (instr->Bits(21, 3) == 2) &&
+  } else if ((instr->Bits(29, 3) == 4) && (instr->Bits(21, 3) == 2) &&
              (instr->Bit(15) == 0)) {
     ASSERT(ra == R31);  // Should-Be-One
     // Format(instr, "smulh 'rd, 'rn, 'rm");
@@ -2568,7 +2571,7 @@ void Simulator::DecodeMiscDP3Source(Instr* instr) {
     const int64_t alu_out = static_cast<int64_t>(res >> 64);
 #endif  // HOST_OS_WINDOWS
     set_register(instr, rd, alu_out, R31IsZR);
-  } else if ((instr->Bits(29, 2) == 0) && (instr->Bits(21, 3) == 6) &&
+  } else if ((instr->Bits(29, 3) == 4) && (instr->Bits(21, 3) == 6) &&
              (instr->Bit(15) == 0)) {
     ASSERT(ra == R31);  // Should-Be-One
     // Format(instr, "umulh 'rd, 'rn, 'rm");

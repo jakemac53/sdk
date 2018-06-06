@@ -76,17 +76,21 @@ class AstRewriteVisitor extends ScopedVisitor {
       }
       Element element = nameScope.lookup(methodName, definingLibrary);
       if (element is ClassElement) {
+        ConstructorElement constructorElement = element.unnamedConstructor;
         AstFactory astFactory = new AstFactoryImpl();
         TypeName typeName = astFactory.typeName(methodName, node.typeArguments);
+        ConstructorName constructorName =
+            astFactory.constructorName(typeName, null, null);
         InstanceCreationExpression instanceCreationExpression =
             astFactory.instanceCreationExpression(
-                _getKeyword(node),
-                astFactory.constructorName(typeName, null, null),
-                node.argumentList);
+                _getKeyword(node), constructorName, node.argumentList);
         DartType type = _getType(element, node.typeArguments);
         methodName.staticElement = element;
         methodName.staticType = type;
         typeName.type = type;
+        constructorName.staticElement = constructorElement;
+        instanceCreationExpression.staticType = type;
+        instanceCreationExpression.staticElement = constructorElement;
         NodeReplacer.replace(node, instanceCreationExpression);
       }
     } else if (target is SimpleIdentifier) {
@@ -98,19 +102,22 @@ class AstRewriteVisitor extends ScopedVisitor {
       Element element = nameScope.lookup(target, definingLibrary);
       if (element is ClassElement) {
         // Possible case: C.n()
-        if (element.getNamedConstructor(methodName.name) != null) {
+        var constructorElement = element.getNamedConstructor(methodName.name);
+        if (constructorElement != null) {
           AstFactory astFactory = new AstFactoryImpl();
           TypeName typeName = astFactory.typeName(target, node.typeArguments);
+          ConstructorName constructorName =
+              astFactory.constructorName(typeName, node.operator, methodName);
           InstanceCreationExpression instanceCreationExpression =
               astFactory.instanceCreationExpression(
-                  _getKeyword(node),
-                  astFactory.constructorName(
-                      typeName, node.operator, methodName),
-                  node.argumentList);
+                  _getKeyword(node), constructorName, node.argumentList);
           DartType type = _getType(element, node.typeArguments);
           methodName.staticElement = element;
           methodName.staticType = type;
           typeName.type = type;
+          constructorName.staticElement = constructorElement;
+          instanceCreationExpression.staticType = type;
+          instanceCreationExpression.staticElement = constructorElement;
           NodeReplacer.replace(node, instanceCreationExpression);
         }
       } else if (element is PrefixElement) {
@@ -122,18 +129,23 @@ class AstRewriteVisitor extends ScopedVisitor {
             astFactory.simpleIdentifier(methodName.token));
         Element prefixedElement = nameScope.lookup(identifier, definingLibrary);
         if (prefixedElement is ClassElement) {
+          ConstructorElement constructorElement =
+              prefixedElement.unnamedConstructor;
           TypeName typeName = astFactory.typeName(
               astFactory.prefixedIdentifier(target, node.operator, methodName),
               node.typeArguments);
+          ConstructorName constructorName =
+              astFactory.constructorName(typeName, null, null);
           InstanceCreationExpression instanceCreationExpression =
               astFactory.instanceCreationExpression(
-                  _getKeyword(node),
-                  astFactory.constructorName(typeName, null, null),
-                  node.argumentList);
+                  _getKeyword(node), constructorName, node.argumentList);
           DartType type = _getType(prefixedElement, node.typeArguments);
           methodName.staticElement = element;
           methodName.staticType = type;
           typeName.type = type;
+          constructorName.staticElement = constructorElement;
+          instanceCreationExpression.staticType = type;
+          instanceCreationExpression.staticElement = constructorElement;
           NodeReplacer.replace(node, instanceCreationExpression);
         }
       }
@@ -143,19 +155,22 @@ class AstRewriteVisitor extends ScopedVisitor {
       if (prefixElement is PrefixElement) {
         Element element = nameScope.lookup(target, definingLibrary);
         if (element is ClassElement) {
-          if (element.getNamedConstructor(methodName.name) != null) {
+          var constructorElement = element.getNamedConstructor(methodName.name);
+          if (constructorElement != null) {
             AstFactory astFactory = new AstFactoryImpl();
             TypeName typeName = astFactory.typeName(target, node.typeArguments);
+            ConstructorName constructorName =
+                astFactory.constructorName(typeName, node.operator, methodName);
             InstanceCreationExpression instanceCreationExpression =
                 astFactory.instanceCreationExpression(
-                    _getKeyword(node),
-                    astFactory.constructorName(
-                        typeName, node.operator, methodName),
-                    node.argumentList);
+                    _getKeyword(node), constructorName, node.argumentList);
             DartType type = _getType(element, node.typeArguments);
             methodName.staticElement = element;
             methodName.staticType = type;
             typeName.type = type;
+            constructorName.staticElement = constructorElement;
+            instanceCreationExpression.staticType = type;
+            instanceCreationExpression.staticElement = constructorElement;
             NodeReplacer.replace(node, instanceCreationExpression);
           }
         }
@@ -1304,7 +1319,7 @@ class BestPracticesVerifier extends RecursiveAstVisitor<Object> {
         rhsType != null &&
         !lhsType.isDynamic &&
         !rhsType.isDynamic &&
-        lhsType.isMoreSpecificThan(rhsType)) {
+        _typeSystem.isMoreSpecificThan(lhsType, rhsType)) {
       _errorReporter.reportErrorForNode(HintCode.UNNECESSARY_CAST, node);
       return true;
     }
@@ -4061,6 +4076,20 @@ class ImportsVerifier {
   final HashMap<ImportDirective, List<SimpleIdentifier>> _unusedShownNamesMap =
       new HashMap<ImportDirective, List<SimpleIdentifier>>();
 
+  /**
+   * A map of names that are hidden more than once.
+   */
+  final HashMap<NamespaceDirective, List<SimpleIdentifier>>
+      _duplicateHiddenNamesMap =
+      new HashMap<NamespaceDirective, List<SimpleIdentifier>>();
+
+  /**
+   * A map of names that are shown more than once.
+   */
+  final HashMap<NamespaceDirective, List<SimpleIdentifier>>
+      _duplicateShownNamesMap =
+      new HashMap<NamespaceDirective, List<SimpleIdentifier>>();
+
   void addImports(CompilationUnit node) {
     for (Directive directive in node.directives) {
       if (directive is ImportDirective) {
@@ -4089,6 +4118,9 @@ class ImportsVerifier {
           }
         }
         _addShownNames(directive);
+      }
+      if (directive is NamespaceDirective) {
+        _addDuplicateShownHiddenNames(directive);
       }
     }
     if (_unusedImports.length > 1) {
@@ -4185,6 +4217,37 @@ class ImportsVerifier {
   }
 
   /**
+   * Report a [HintCode.DUPLICATE_SHOWN_HIDDEN_NAME] hint for each duplicate
+   * shown or hidden name.
+   *
+   * Only call this method after all of the compilation units have been visited
+   * by this visitor.
+   *
+   * @param errorReporter the error reporter used to report the set of
+   *          [HintCode.UNUSED_SHOWN_NAME] hints
+   */
+  void generateDuplicateShownHiddenNameHints(ErrorReporter reporter) {
+    _duplicateHiddenNamesMap.forEach(
+        (NamespaceDirective directive, List<SimpleIdentifier> identifiers) {
+      int length = identifiers.length;
+      for (int i = 0; i < length; i++) {
+        Identifier identifier = identifiers[i];
+        reporter.reportErrorForNode(
+            HintCode.DUPLICATE_HIDDEN_NAME, identifier, [identifier.name]);
+      }
+    });
+    _duplicateShownNamesMap.forEach(
+        (NamespaceDirective directive, List<SimpleIdentifier> identifiers) {
+      int length = identifiers.length;
+      for (int i = 0; i < length; i++) {
+        Identifier identifier = identifiers[i];
+        reporter.reportErrorForNode(
+            HintCode.DUPLICATE_SHOWN_NAME, identifier, [identifier.name]);
+      }
+    });
+  }
+
+  /**
    * Remove elements from [_unusedImports] using the given [usedElements].
    */
   void removeUsedElements(UsedImportedElements usedElements) {
@@ -4241,6 +4304,43 @@ class ImportsVerifier {
         for (SimpleIdentifier name in combinator.shownNames) {
           if (name.staticElement != null) {
             identifiers.add(name);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Add duplicate shown and hidden names from [directive] into
+   * [_duplicateHiddenNamesMap] and [_duplicateShownNamesMap].
+   */
+  void _addDuplicateShownHiddenNames(NamespaceDirective directive) {
+    if (directive.combinators == null) {
+      return;
+    }
+    for (Combinator combinator in directive.combinators) {
+      // Use a Set to find duplicates in faster than O(n^2) time.
+      Set<Element> identifiers = new Set<Element>();
+      if (combinator is HideCombinator) {
+        for (SimpleIdentifier name in combinator.hiddenNames) {
+          if (name.staticElement != null) {
+            if (!identifiers.add(name.staticElement)) {
+              // [name] is a duplicate.
+              List<SimpleIdentifier> duplicateNames = _duplicateHiddenNamesMap
+                  .putIfAbsent(directive, () => new List<SimpleIdentifier>());
+              duplicateNames.add(name);
+            }
+          }
+        }
+      } else if (combinator is ShowCombinator) {
+        for (SimpleIdentifier name in combinator.shownNames) {
+          if (name.staticElement != null) {
+            if (!identifiers.add(name.staticElement)) {
+              // [name] is a duplicate.
+              List<SimpleIdentifier> duplicateNames = _duplicateShownNamesMap
+                  .putIfAbsent(directive, () => new List<SimpleIdentifier>());
+              duplicateNames.add(name);
+            }
           }
         }
       }
@@ -6748,6 +6848,9 @@ class ResolverVisitor extends ScopedVisitor {
    */
   void _inferFunctionExpressionParametersTypes(
       Expression mayBeClosure, DartType mayByFunctionType) {
+    // TODO(mfairhurst): remove this code and callers. It's doing
+    // "propagated type" inference for the Dart 1 type system.
+    assert(!strongMode);
     // prepare closure
     if (mayBeClosure is! FunctionExpression) {
       return;

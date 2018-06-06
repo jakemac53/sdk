@@ -1,6 +1,7 @@
 # Copyright (c) 2018, the Dart project authors. Please see the AUTHORS file
 # for details. All rights reserved. Use of this source code is governed by a
 # BSD-style license that can be found in the LICENSE.md file.
+
 AbstractClassInstantiation/analyzerCode: Fail
 AbstractClassInstantiation/example: Fail
 AbstractClassMember/script5: Fail
@@ -82,10 +83,9 @@ ConstEvalInvalidType/example: Fail
 ConstEvalNonConstantLiteral/dart2jsCode: Fail
 ConstEvalNonConstantLiteral/example: Fail
 ConstFieldWithoutInitializer/example: Fail
-ConstructorHasNoSuchNamedParameter/analyzerCode: Fail
-ConstructorHasNoSuchNamedParameter/example: Fail
 ConstructorNotFound/analyzerCode: Fail
 ConstructorNotFound/example: Fail
+ConstructorWithTypeParameters/analyzerCode: Fail # No corresponding analyzer message
 ContinueOutsideOfLoop/script1: Fail
 ContinueWithoutLabelInCase/script1: Fail
 CouldNotParseUri/analyzerCode: Fail
@@ -190,8 +190,10 @@ FinalAndCovariant/script2: Fail
 FinalFieldWithoutInitializer/example: Fail
 FinalInstanceVariableAlreadyInitialized/analyzerCode: Fail
 FinalInstanceVariableAlreadyInitialized/example: Fail
-FunctionHasNoSuchNamedParameter/analyzerCode: Fail
-FunctionHasNoSuchNamedParameter/example: Fail
+ForInLoopExactlyOneVariable/analyzerCode: Fail # The analyzer doesn't recover well.
+ForInLoopExactlyOneVariable/statement: Fail # Fasta reports too many errors.
+ForInLoopNotAssignable/analyzerCode: Fail # The analyzer reports a different error.
+ForInLoopNotAssignable/statement: Fail
 FunctionTypeDefaultValue/example: Fail
 FunctionTypedParameterVar/script1: Fail
 GeneratorReturnsValue/example: Fail
@@ -253,8 +255,6 @@ MemberWithSameNameAsClass/analyzerCode: Fail
 MemberWithSameNameAsClass/example: Fail
 MetadataTypeArguments/analyzerCode: Fail
 MetadataTypeArguments/example: Fail
-MethodHasNoSuchNamedParameter/analyzerCode: Fail
-MethodHasNoSuchNamedParameter/example: Fail
 MethodNotFound/analyzerCode: Fail
 MethodNotFound/example: Fail
 MissingAssignableSelector/script1: Fail
@@ -275,6 +275,8 @@ MultipleWith/script: Fail
 NamedFunctionExpression/example: Fail
 NativeClauseShouldBeAnnotation/example: Fail
 NoFormals/example: Fail
+NoSuchNamedParameter/analyzerCode: Fail
+NoSuchNamedParameter/example: Fail
 NoUnnamedConstructorInObject/analyzerCode: Fail
 NoUnnamedConstructorInObject/example: Fail
 NonAsciiIdentifier/expression: Fail
@@ -383,18 +385,10 @@ ThisAccessInFieldInitializer/analyzerCode: Fail
 ThisAccessInFieldInitializer/example: Fail
 ThisAsIdentifier/analyzerCode: Fail
 ThisAsIdentifier/example: Fail
-TooFewArgumentsToConstructor/analyzerCode: Fail
-TooFewArgumentsToConstructor/example: Fail
-TooFewArgumentsToFunction/analyzerCode: Fail
-TooFewArgumentsToFunction/example: Fail
-TooFewArgumentsToMethod/analyzerCode: Fail
-TooFewArgumentsToMethod/example: Fail
-TooManyArgumentsToConstructor/analyzerCode: Fail
-TooManyArgumentsToConstructor/example: Fail
-TooManyArgumentsToFunction/analyzerCode: Fail
-TooManyArgumentsToFunction/example: Fail
-TooManyArgumentsToMethod/analyzerCode: Fail
-TooManyArgumentsToMethod/example: Fail
+TooFewArguments/analyzerCode: Fail
+TooFewArguments/example: Fail
+TooManyArguments/analyzerCode: Fail
+TooManyArguments/example: Fail
 TopLevelOperator/script1: Fail
 TopLevelOperator/script2: Fail
 TopLevelOperator/script3: Fail
@@ -410,7 +404,6 @@ TypeVariableInStaticContext/analyzerCode: Fail
 TypeVariableInStaticContext/example: Fail
 TypeVariableSameNameAsEnclosing/analyzerCode: Fail
 TypeVariableSameNameAsEnclosing/example: Fail
-TypedefNotFunction/analyzerCode: Fail
 TypedefNotFunction/example: Fail
 UnexpectedDollarInString/analyzerCode: Fail
 UnexpectedDollarInString/script1: Fail

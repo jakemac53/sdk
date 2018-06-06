@@ -7,7 +7,7 @@ import 'nodes.dart';
 import '../elements/entities.dart';
 import '../elements/types.dart';
 import '../io/source_information.dart';
-import '../types/types.dart';
+import '../types/abstract_value_domain.dart';
 import '../universe/use.dart' show TypeUse;
 
 /// Enum that defines how a member has access to the current type variables.
@@ -40,7 +40,7 @@ abstract class TypeBuilder {
 
   /// Create a type mask for 'trusting' a DartType. Returns `null` if there is
   /// no approximating type mask (i.e. the type mask would be `dynamic`).
-  TypeMask trustTypeMask(DartType type) {
+  AbstractValue trustTypeMask(DartType type) {
     if (type == null) return null;
     type = builder.localsHandler.substInContext(type);
     type = type.unaliased;
@@ -49,13 +49,13 @@ abstract class TypeBuilder {
     if (type == builder.commonElements.objectType) return null;
     // The type element is either a class or the void element.
     ClassEntity element = (type as InterfaceType).element;
-    return new TypeMask.subtype(element, builder.closedWorld);
+    return builder.abstractValueDomain.createNullableSubtype(element);
   }
 
   /// Create an instruction to simply trust the provided type.
   HInstruction _trustType(HInstruction original, DartType type) {
     assert(type != null);
-    TypeMask mask = trustTypeMask(type);
+    AbstractValue mask = trustTypeMask(type);
     if (mask == null) return original;
     return new HTypeKnown.pinned(mask, original);
   }
@@ -72,7 +72,21 @@ abstract class TypeBuilder {
     // a similar operation on `registry`; otherwise, this one might not be
     // needed.
     builder.registry?.registerTypeUse(new TypeUse.isCheck(type));
+    if (other is HTypeConversion && other.isRedundant(builder.closedWorld)) {
+      return original;
+    }
     return other;
+  }
+
+  HInstruction trustTypeOfParameter(HInstruction original, DartType type) {
+    if (type == null) return original;
+    HInstruction trusted = _trustType(original, type);
+    if (trusted == original) return original;
+    if (trusted is HTypeKnown && trusted.isRedundant(builder.closedWorld)) {
+      return original;
+    }
+    builder.add(trusted);
+    return trusted;
   }
 
   HInstruction potentiallyCheckOrTrustTypeOfParameter(
@@ -171,11 +185,11 @@ abstract class TypeBuilder {
     HInstruction target =
         builder.localsHandler.readThis(sourceInformation: sourceInformation);
     HInstruction interceptor =
-        new HInterceptor(target, builder.commonMasks.nonNullType)
+        new HInterceptor(target, builder.abstractValueDomain.nonNullType)
           ..sourceInformation = sourceInformation;
     builder.add(interceptor);
     builder.push(new HTypeInfoReadVariable.intercepted(
-        variable, interceptor, target, builder.commonMasks.dynamicType)
+        variable, interceptor, target, builder.abstractValueDomain.dynamicType)
       ..sourceInformation = sourceInformation);
     return builder.pop();
   }
@@ -197,7 +211,7 @@ abstract class TypeBuilder {
         TypeInfoExpressionKind.INSTANCE,
         builder.closedWorld.elementEnvironment.getThisType(interface.element),
         inputs,
-        builder.commonMasks.dynamicType)
+        builder.abstractValueDomain.dynamicType)
       ..sourceInformation = sourceInformation;
     return representation;
   }
@@ -229,15 +243,11 @@ abstract class TypeBuilder {
         TypeInfoExpressionKind.COMPLETE,
         argument,
         inputs,
-        builder.commonMasks.dynamicType)
+        builder.abstractValueDomain.dynamicType)
       ..sourceInformation = sourceInformation;
     builder.add(result);
     return result;
   }
-
-  /// In checked mode, generate type tests for the parameters of the inlined
-  /// function.
-  void potentiallyCheckInlinedParameterTypes(FunctionEntity function);
 
   bool get checkOrTrustTypes =>
       builder.options.strongMode ||
@@ -254,18 +264,17 @@ abstract class TypeBuilder {
     if (type == null) return original;
     if (type.isTypeVariable) {
       TypeVariableType typeVariable = type;
-      // GENERIC_METHODS: The following statement was added for parsing and
-      // ignoring method type variables; must be generalized for full support of
-      // generic methods.
-      if (typeVariable.element.typeDeclaration is! ClassEntity) {
+      // In Dart 1, method type variables are ignored.
+      if (!builder.options.strongMode &&
+          typeVariable.element.typeDeclaration is! ClassEntity) {
         type = const DynamicType();
       }
     }
     type = type.unaliased;
     if (type.isInterfaceType && !type.treatAsRaw) {
       InterfaceType interfaceType = type;
-      TypeMask subtype =
-          new TypeMask.subtype(interfaceType.element, builder.closedWorld);
+      AbstractValue subtype = builder.abstractValueDomain
+          .createNullableSubtype(interfaceType.element);
       HInstruction representations = buildTypeArgumentRepresentations(
           type, builder.sourceElement, sourceInformation);
       builder.add(representations);
@@ -273,7 +282,7 @@ abstract class TypeBuilder {
           type, kind, subtype, original, representations)
         ..sourceInformation = sourceInformation;
     } else if (type.isTypeVariable) {
-      TypeMask subtype = original.instructionType;
+      AbstractValue subtype = original.instructionType;
       HInstruction typeVariable =
           addTypeVariableReference(type, builder.sourceElement);
       return new HTypeConversion.withTypeRepresentation(
@@ -283,7 +292,7 @@ abstract class TypeBuilder {
       HInstruction reifiedType =
           analyzeTypeArgument(type, builder.sourceElement);
       // TypeMasks don't encode function types or FutureOr types.
-      TypeMask refinedMask = original.instructionType;
+      AbstractValue refinedMask = original.instructionType;
       return new HTypeConversion.withTypeRepresentation(
           type, kind, refinedMask, original, reifiedType)
         ..sourceInformation = sourceInformation;

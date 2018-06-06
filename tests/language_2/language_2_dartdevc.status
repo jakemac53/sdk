@@ -22,7 +22,10 @@ await_future_test: Pass, Timeout # Issue 29920
 bit_operations_test: RuntimeError # No bigints on web.
 bug32372_test: RuntimeError
 built_in_identifier_prefix_test: CompileTimeError
-built_in_identifier_type_annotation_test/22: MissingCompileTimeError # Issue 28816
+built_in_identifier_type_annotation_test/dynamic-funarg: RuntimeError # Issue 28816
+built_in_identifier_type_annotation_test/dynamic-funret: RuntimeError # Issue 28816
+built_in_identifier_type_annotation_test/dynamic-gen: MissingCompileTimeError # Issue 28816
+built_in_identifier_type_annotation_test/dynamic-list: RuntimeError # Issue 28816
 cascaded_forwarding_stubs_generic_test: RuntimeError
 cascaded_forwarding_stubs_test: CompileTimeError
 conflicting_generic_interfaces_hierarchy_loop_infinite_test: Skip # Crashes or times out
@@ -36,6 +39,8 @@ const_types_test/08: MissingCompileTimeError
 const_types_test/14: MissingCompileTimeError
 const_types_test/15: MissingCompileTimeError
 constant_type_literal_test/01: MissingCompileTimeError # DDC allows type parameter type literals in const expressions.
+constructor_type_parameter_test/00: MissingCompileTimeError
+constructor_with_type_parameters_test/03: MissingCompileTimeError
 covariance_field_test/03: RuntimeError
 covariant_override/tear_off_type_test: RuntimeError # Issue 28395
 default_implementation2_test: CompileTimeError # Issue 30855
@@ -59,7 +64,6 @@ function_propagation_test: RuntimeError
 generic_local_functions_test: CompileTimeError
 generic_methods_generic_function_parameter_test: CompileTimeError
 generic_methods_generic_function_result_test/none: CompileTimeError # Issue #30208
-generic_methods_overriding_test/03: MissingCompileTimeError # Issue 29920
 generic_no_such_method_dispatcher_simple_test: Skip # This test is just for kernel.
 generic_no_such_method_dispatcher_test: CompileTimeError
 getter_closure_execution_order_test: RuntimeError # Issue 29920
@@ -138,7 +142,6 @@ override_inheritance_field_test/50: CompileTimeError
 override_inheritance_generic_test/02: CompileTimeError
 override_inheritance_method_test/28: CompileTimeError
 override_inheritance_method_test/29: CompileTimeError
-parameter_initializer_test: CompileTimeError
 part_refers_to_core_library_test/01: Crash
 prefix_shadow_test/01: MissingCompileTimeError # Issue 33005
 regress_23089_test: MissingCompileTimeError
@@ -295,8 +298,9 @@ async_return_types_test/wrongReturnType: MissingCompileTimeError
 bad_override_test/01: MissingCompileTimeError
 bad_override_test/02: MissingCompileTimeError
 bad_override_test/03: MissingCompileTimeError
-built_in_identifier_type_annotation_test/05: RuntimeError # Issue 32194
-built_in_identifier_type_annotation_test/none: RuntimeError # Issue 32194
+built_in_identifier_type_annotation_test/dynamic-funarg: RuntimeError # Issue 32194
+built_in_identifier_type_annotation_test/dynamic-funret: RuntimeError # Issue 32194
+built_in_identifier_type_annotation_test/dynamic-list: RuntimeError # Issue 32194
 call_method_as_cast_test/06: RuntimeError # Kernel allows classes to subtype `Function` so DDK elides the explicit cast.
 call_method_implicit_tear_off_implements_function_test/05: RuntimeError # Kernel is missing the implicit `call` tearoff for assignment `Function`
 call_method_implicit_tear_off_implements_function_test/06: RuntimeError # Kernel is missing the implicit `call` tearoff for assignment `Function`
@@ -304,7 +308,6 @@ call_method_must_not_be_field_test/06: RuntimeError # Kernel does not distinguis
 call_method_must_not_be_getter_test/06: RuntimeError # Kernel does not distinguish `d()` from `d.call()`
 call_non_method_field_test/01: MissingCompileTimeError
 call_non_method_field_test/02: MissingCompileTimeError
-cast_test/none: RuntimeError # Issue 32194
 check_member_static_test/01: MissingCompileTimeError
 check_member_static_test/02: MissingCompileTimeError
 class_cycle_test/02: MissingCompileTimeError
@@ -315,8 +318,6 @@ compile_time_constant_k_test/02: MissingCompileTimeError
 compile_time_constant_k_test/03: MissingCompileTimeError
 compile_time_constant_o_test/01: MissingCompileTimeError
 compile_time_constant_o_test/02: MissingCompileTimeError
-compile_time_constant_static2_test/04: MissingCompileTimeError
-compile_time_constant_static3_test/04: MissingCompileTimeError
 compile_time_constant_static4_test/02: MissingCompileTimeError
 compile_time_constant_static4_test/03: MissingCompileTimeError
 compile_time_constant_static5_test/11: CompileTimeError # Issue 31537
@@ -338,7 +339,6 @@ const_switch2_test/01: MissingCompileTimeError
 const_syntax_test/05: MissingCompileTimeError
 const_types_test/34: MissingCompileTimeError
 const_types_test/39: MissingCompileTimeError
-constant_string_interpolation2_test: RuntimeError # Issue 32194
 constants_test/05: MissingCompileTimeError
 constructor_redirect1_negative_test/01: MissingCompileTimeError
 constructor_redirect2_negative_test: MissingCompileTimeError
@@ -384,6 +384,7 @@ function_type_parameter2_negative_test: Fail
 function_type_parameter_negative_test: Fail
 generic_function_bounds_test: RuntimeError
 generic_methods_generic_function_result_test/01: MissingCompileTimeError
+generic_methods_overriding_test/01: MissingCompileTimeError # Issue 29920
 generic_methods_recursive_bound_test/02: MissingCompileTimeError
 generic_no_such_method_dispatcher_simple_test: CompileTimeError # Warning: Superclass has no method named 'foo'.
 generic_no_such_method_dispatcher_test: CompileTimeError # Issue 31533
@@ -407,8 +408,6 @@ implicit_creation/implicit_const_not_default_values_test/e3: Pass
 implicit_creation/implicit_const_not_default_values_test/e30: Pass
 implicit_creation/implicit_const_not_default_values_test/e6: Pass
 implicit_creation/implicit_const_not_default_values_test/e9: Pass
-initializing_formal_type_annotation_test/01: MissingCompileTimeError
-initializing_formal_type_annotation_test/02: MissingCompileTimeError
 instantiate_tearoff_of_call_test: CompileTimeError
 issue18628_2_test/01: MissingCompileTimeError
 issue31596_override_test/07: MissingCompileTimeError
@@ -514,16 +513,14 @@ mixin_supertype_subclass_test/02: MissingCompileTimeError
 mixin_supertype_subclass_test/05: MissingCompileTimeError
 mixin_type_parameters_errors_test/03: MissingCompileTimeError
 mixin_type_parameters_errors_test/04: MissingCompileTimeError
+mock_writable_final_field_test: RuntimeError # Issue 30847
 mock_writable_final_private_field_test: RuntimeError
 multiline_newline_test/06: MissingCompileTimeError
 multiline_newline_test/06r: MissingCompileTimeError
 named_constructor_test/01: MissingCompileTimeError
 named_parameters_default_eq_test/02: MissingCompileTimeError
-null2_test: RuntimeError # Issue 32194
-null_method_test: RuntimeError # Issue 32194
+no_such_method_mock_test: RuntimeError # Issue 31426 - Kernel does not introduce nSM for implemented fields.
 null_no_such_method_test: CompileTimeError # Issue 31533
-null_test/none: RuntimeError # Issue 32194
-null_to_string_test: RuntimeError # Issue 32194
 override_field_test/01: MissingCompileTimeError
 override_field_test/02: MissingCompileTimeError
 override_inheritance_field_test/04: CompileTimeError # Issue 31616
@@ -559,7 +556,6 @@ setter_override_test/01: MissingCompileTimeError
 setter_override_test/02: MissingCompileTimeError
 setter_override_test/03: MissingCompileTimeError
 string_interpolate_test: CompileTimeError # Issue 31533
-string_optimizations_test: RuntimeError # Issue 32194
 string_split_test: CompileTimeError # Issue 31616
 string_supertype_checked_test: CompileTimeError # Issue 31616
 super_bound_closure_test/none: CompileTimeError # Issue 31533
@@ -578,7 +574,6 @@ switch_case_test/00: MissingCompileTimeError
 switch_case_test/01: MissingCompileTimeError
 switch_case_test/02: MissingCompileTimeError
 syncstar_yield_test/copyParameters: RuntimeError # Expect.equals(expected: <2>, actual: <3>) fails.
-tearoff_dynamic_test: RuntimeError # Issue 32194
 try_catch_test/01: MissingCompileTimeError
 type_alias_equality_test/02: RuntimeError # Issue 32785
 type_literal_test: RuntimeError # Expect.equals(expected: <Func>, actual: <(bool) => int>) fails.
@@ -663,7 +658,8 @@ example_constructor_test: RuntimeError # Expect.equals(expected: <0 1 2 3 4 5 6 
 exception_test: RuntimeError # DDC doesn't implement NullThrownError?; Expect.isTrue(false) fails.
 expect_test: RuntimeError # Issue 29920; Expect.identical did not fail
 f_bounded_quantification3_test: RuntimeError # Issue 29920; Uncaught Error: type arguments should not be null: (F1, F2) => {
-field3_test/01: MissingCompileTimeError
+field3_test/01: MissingCompileTimeError # Issue 33022
+field3_test/02: MissingCompileTimeError # Issue 33022
 field_initialization_order_test/none: RuntimeError # Expect.equals(expected: <b.a.ai.bi.>, actual: <b.bi.a.ai.>) fails.
 flatten_test/05: MissingRuntimeError # Issue 29920
 flatten_test/08: MissingRuntimeError # Issue 29920
@@ -675,7 +671,6 @@ generic_function_type_as_type_argument_test/01: MissingCompileTimeError # Issue 
 generic_function_type_as_type_argument_test/02: MissingCompileTimeError # Issue 29920
 generic_instanceof2_test: RuntimeError # Issue 29920; ReferenceError: FooOfK$String is not defined
 generic_is_check_test: RuntimeError # Issue 29920; Expect.isTrue(false) fails.
-generic_methods_overriding_test/01: MissingCompileTimeError # Issue 29920
 generic_tearoff_test: CompileTimeError
 identical_closure2_test: RuntimeError # Issue 29920; Expect.isFalse(true) fails.
 infinite_switch_label_test: RuntimeError # Issue 29920; NoSuchMethodError: method not found: '<Unexpected Null Value>'

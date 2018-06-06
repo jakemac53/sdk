@@ -396,15 +396,18 @@ void UnboxedConstantInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 
 LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
                                                             bool opt) const {
-  // In AOT mode, we want to prevent spilling of the function/instantiator type
-  // argument vectors, since we preserve them.  So we make this a `kNoCall`
-  // summary.  Though most other registers can be modified by the type testing
-  // stubs we are calling.  To tell the register allocator about it, we reserve
+  // When using a type testing stub, we want to prevent spilling of the
+  // function/instantiator type argument vectors, since stub preserves them. So
+  // we make this a `kNoCall` summary, even though most other registers can be
+  // modified by the stub. To tell the register allocator about it, we reserve
   // all the other registers as temporary registers.
   // TODO(http://dartbug.com/32788): Simplify this.
   const Register kInstanceReg = R0;
   const Register kInstantiatorTypeArgumentsReg = R2;
   const Register kFunctionTypeArgumentsReg = R1;
+
+  const bool using_stub =
+      FlowGraphCompiler::ShouldUseTypeTestingStubFor(opt, dst_type());
 
   const intptr_t kNonChangeableInputRegs =
       (1 << kInstanceReg) | (1 << kInstantiatorTypeArgumentsReg) |
@@ -412,15 +415,26 @@ LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
 
   const intptr_t kNumInputs = 3;
 
-  const intptr_t kNumTemps =
-      FLAG_precompiled_mode ? (Utils::CountOneBits64(kDartAvailableCpuRegs) -
-                               Utils::CountOneBits64(kNonChangeableInputRegs))
-                            : 0;
+  // We invoke a stub that can potentially clobber any CPU register
+  // but can only clobber FPU registers on the slow path when
+  // entering runtime. Preserve all FPU registers that are
+  // not guarateed to be preserved by the ABI.
+  const intptr_t kCpuRegistersToPreserve =
+      kDartAvailableCpuRegs & ~kNonChangeableInputRegs;
+  const intptr_t kFpuRegistersToPreserve =
+      Utils::SignedNBitMask(kNumberOfFpuRegisters) &
+      ~(Utils::SignedNBitMask(kAbiPreservedFpuRegCount)
+        << kAbiFirstPreservedFpuReg) &
+      ~(1 << FpuTMP);
 
-  LocationSummary* summary = new (zone)
-      LocationSummary(zone, kNumInputs, kNumTemps,
-                      FLAG_precompiled_mode ? LocationSummary::kCallCalleeSafe
-                                            : LocationSummary::kCall);
+  const intptr_t kNumTemps =
+      using_stub ? (Utils::CountOneBits64(kCpuRegistersToPreserve) +
+                    Utils::CountOneBits64(kFpuRegistersToPreserve))
+                 : 0;
+
+  LocationSummary* summary = new (zone) LocationSummary(
+      zone, kNumInputs, kNumTemps,
+      using_stub ? LocationSummary::kCallCalleeSafe : LocationSummary::kCall);
   summary->set_in(0, Location::RegisterLocation(kInstanceReg));  // Value.
   summary->set_in(1,
                   Location::RegisterLocation(
@@ -432,15 +446,22 @@ LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
   // once register allocator no longer hits assertion.
   summary->set_out(0, Location::RegisterLocation(kInstanceReg));
 
-  if (FLAG_precompiled_mode) {
+  if (using_stub) {
     // Let's reserve all registers except for the input ones.
     intptr_t next_temp = 0;
     for (intptr_t i = 0; i < kNumberOfCpuRegisters; ++i) {
-      const bool is_allocatable = ((1 << i) & kDartAvailableCpuRegs) != 0;
-      const bool is_input = ((1 << i) & kNonChangeableInputRegs) != 0;
-      if (is_allocatable && !is_input) {
+      const bool should_preserve = ((1 << i) & kCpuRegistersToPreserve) != 0;
+      if (should_preserve) {
         summary->set_temp(next_temp++,
                           Location::RegisterLocation(static_cast<Register>(i)));
+      }
+    }
+
+    for (intptr_t i = 0; i < kNumberOfFpuRegisters; i++) {
+      const bool should_preserve = ((1 << i) & kFpuRegistersToPreserve) != 0;
+      if (should_preserve) {
+        summary->set_temp(next_temp++, Location::FpuRegisterLocation(
+                                           static_cast<FpuRegister>(i)));
       }
     }
   }
@@ -2888,38 +2909,15 @@ void CatchBlockEntryInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   ASSERT(fp_sp_dist <= 0);
   __ AddImmediate(SP, FP, fp_sp_dist);
 
-  // Auxiliary variables introduced by the try catch can be captured if we are
-  // inside a function with yield/resume points. In this case we first need
-  // to restore the context to match the context at entry into the closure.
-  if (should_restore_closure_context()) {
-    const ParsedFunction& parsed_function = compiler->parsed_function();
-    ASSERT(parsed_function.function().IsClosureFunction());
-    LocalScope* scope = parsed_function.node_sequence()->scope();
-
-    LocalVariable* closure_parameter = scope->VariableAt(0);
-    ASSERT(!closure_parameter->is_captured());
-    __ LoadFromOffset(kWord, R6, FP, closure_parameter->index() * kWordSize);
-    __ LoadFieldFromOffset(kWord, R6, R6, Closure::context_offset());
-
-    const intptr_t context_index =
-        parsed_function.current_context_var()->index();
-    __ StoreToOffset(kWord, R6, FP, context_index * kWordSize);
-  }
-
-  // Initialize exception and stack trace variables.
-  if (exception_var().is_captured()) {
-    ASSERT(stacktrace_var().is_captured());
-    __ StoreIntoObjectOffset(R6,
-                             Context::variable_offset(exception_var().index()),
-                             kExceptionObjectReg);
-    __ StoreIntoObjectOffset(R6,
-                             Context::variable_offset(stacktrace_var().index()),
-                             kStackTraceObjectReg);
-  } else {
-    __ StoreToOffset(kWord, kExceptionObjectReg, FP,
-                     exception_var().index() * kWordSize);
-    __ StoreToOffset(kWord, kStackTraceObjectReg, FP,
-                     stacktrace_var().index() * kWordSize);
+  if (!compiler->is_optimizing()) {
+    if (raw_exception_var_ != nullptr) {
+      __ StoreToOffset(kWord, kExceptionObjectReg, FP,
+                       raw_exception_var_->index() * kWordSize);
+    }
+    if (raw_stacktrace_var_ != nullptr) {
+      __ StoreToOffset(kWord, kStackTraceObjectReg, FP,
+                       raw_stacktrace_var_->index() * kWordSize);
+    }
   }
 }
 

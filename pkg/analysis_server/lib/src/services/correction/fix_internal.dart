@@ -84,10 +84,96 @@ class DefaultFixContributor extends DartFixContributor {
     try {
       FixProcessor processor = new FixProcessor(context);
       List<Fix> fixes = await processor.compute();
-      return fixes;
+      List<Fix> fixAllFixes = await _computeFixAllFixes(context, fixes);
+      return new List.from(fixes)..addAll(fixAllFixes);
     } on CancelCorrectionException {
       return Fix.EMPTY_LIST;
     }
+  }
+
+  Future<List<Fix>> _computeFixAllFixes(
+      DartFixContext context, List<Fix> fixes) async {
+    final AnalysisError analysisError = context.error;
+    final List<AnalysisError> allAnalysisErrors = context.errors;
+
+    // Validate inputs:
+    // - return if no fixes
+    // - return if no other analysis errors
+    if (fixes.isEmpty || allAnalysisErrors.length < 2) {
+      return Fix.EMPTY_LIST;
+    }
+
+    // Remove any analysis errors that don't have the expected error code name
+    allAnalysisErrors
+        .removeWhere((e) => analysisError.errorCode.name != e.errorCode.name);
+    if (allAnalysisErrors.length < 2) {
+      return Fix.EMPTY_LIST;
+    }
+
+    // A map between each FixKind and the List of associated fixes
+    final HashMap<FixKind, List<Fix>> map = new HashMap();
+
+    // Populate the HashMap by looping through all AnalysisErrors, creating a
+    // new FixProcessor to compute the other fixes that can be applied with this
+    // one.
+    // For each fix, put the fix into the HashMap.
+    for (int i = 0; i < allAnalysisErrors.length; i++) {
+      final FixContext fixContextI = new FixContextImpl(
+          context.resourceProvider,
+          context.analysisDriver,
+          allAnalysisErrors[i],
+          allAnalysisErrors);
+      final DartFixContextImpl dartFixContextI = new DartFixContextImpl(
+          fixContextI, context.astProvider, context.unit);
+      final FixProcessor processorI = new FixProcessor(dartFixContextI);
+      final List<Fix> fixesListI = await processorI.compute();
+      for (Fix f in fixesListI) {
+        if (!map.containsKey(f.kind)) {
+          map[f.kind] = new List<Fix>()..add(f);
+        } else {
+          map[f.kind].add(f);
+        }
+      }
+    }
+
+    // For each FixKind in the HashMap, union each list together, then return
+    // the set of unioned Fixes.
+    final List<Fix> result = new List<Fix>();
+    map.forEach((FixKind kind, List<Fix> fixesListJ) {
+      if (fixesListJ.first.kind.canBeAppliedTogether()) {
+        Fix unionFix = _unionFixList(fixesListJ);
+        if (unionFix != null) {
+          result.add(unionFix);
+        }
+      }
+    });
+    return result;
+  }
+
+  Fix _unionFixList(List<Fix> fixList) {
+    if (fixList == null || fixList.isEmpty) {
+      return null;
+    } else if (fixList.length == 1) {
+      return fixList[0];
+    }
+    final SourceChange sourceChange =
+        new SourceChange(fixList[0].kind.appliedTogetherMessage);
+    sourceChange.edits = new List.from(fixList[0].change.edits);
+    final List<SourceEdit> edits = new List<SourceEdit>();
+    edits.addAll(fixList[0].change.edits[0].edits);
+    sourceChange.linkedEditGroups =
+        new List.from(fixList[0].change.linkedEditGroups);
+    for (int i = 1; i < fixList.length; i++) {
+      edits.addAll(fixList[i].change.edits[0].edits);
+      sourceChange.linkedEditGroups..addAll(fixList[i].change.linkedEditGroups);
+    }
+    // Sort the list of SourceEdits so that when the edits are applied, they
+    // are applied from the end of the file to the top of the file.
+    edits.sort((s1, s2) => s2.offset - s1.offset);
+
+    sourceChange.edits[0].edits = edits;
+
+    return new Fix(fixList[0].kind, sourceChange);
   }
 }
 
@@ -403,6 +489,7 @@ class FixProcessor {
     if (errorCode == HintCode.UNDEFINED_METHOD ||
         errorCode == StaticTypeWarningCode.UNDEFINED_METHOD) {
       await _addFix_importLibrary_withFunction();
+      await _addFix_importLibrary_withType();
       await _addFix_undefinedMethod_useSimilar();
       await _addFix_undefinedMethod_create();
       await _addFix_undefinedFunction_create();
@@ -1954,13 +2041,13 @@ class FixProcessor {
     _addFixFromBuilder(changeBuilder, DartFixKind.REPLACE_RETURN_TYPE_FUTURE);
   }
 
-  Future<Null> _addFix_importLibrary(FixKind kind, Source library) async {
-    String libraryUri = getLibrarySourceUri(unitLibraryElement, library);
+  Future<Null> _addFix_importLibrary(FixKind kind, Uri library) async {
+    String uriText;
     DartChangeBuilder changeBuilder = new DartChangeBuilder(session);
     await changeBuilder.addFileEdit(file, (DartFileEditBuilder builder) {
-      builder.importLibraries([library]);
+      uriText = builder.importLibrary(library);
     });
-    _addFixFromBuilder(changeBuilder, kind, args: [libraryUri]);
+    _addFixFromBuilder(changeBuilder, kind, args: [uriText]);
   }
 
   Future<Null> _addFix_importLibrary_withElement(String name,
@@ -2060,7 +2147,7 @@ class FixProcessor {
           fixKind = DartFixKind.IMPORT_LIBRARY_PROJECT1;
         }
         // Add the fix.
-        await _addFix_importLibrary(fixKind, librarySource);
+        await _addFix_importLibrary(fixKind, librarySource.uri);
       }
     }
   }
@@ -2348,9 +2435,11 @@ class FixProcessor {
     } else {
       DartChangeBuilder changeBuilder = new DartChangeBuilder(session);
       await changeBuilder.addFileEdit(file, (DartFileEditBuilder builder) {
-        builder.addSimpleReplacement(
-            range.endEnd(emptyStatement.beginToken.previous, emptyStatement),
-            ' {}');
+        Token previous = emptyStatement.findPrevious(emptyStatement.beginToken);
+        if (previous != null) {
+          builder.addSimpleReplacement(
+              range.endEnd(previous, emptyStatement), ' {}');
+        }
       });
       _addFixFromBuilder(changeBuilder, DartFixKind.REPLACE_WITH_BRACKETS);
     }
@@ -2589,6 +2678,9 @@ class FixProcessor {
     IfStatement ifStatement = node is IfStatement
         ? node
         : node.getAncestor((node) => node is IfStatement);
+    if (ifStatement == null) {
+      return;
+    }
     var thenStatement = ifStatement.thenStatement;
     Statement uniqueStatement(Statement statement) {
       if (statement is Block) {
@@ -2820,7 +2912,8 @@ class FixProcessor {
 
   Future<Null> _addFix_undefinedFunction_create() async {
     // should be the name of the invocation
-    if (node is SimpleIdentifier && node.parent is MethodInvocation) {} else {
+    if (node is SimpleIdentifier && node.parent is MethodInvocation) {
+    } else {
       return;
     }
     String name = (node as SimpleIdentifier).name;

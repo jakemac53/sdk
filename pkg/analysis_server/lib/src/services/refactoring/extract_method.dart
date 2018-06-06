@@ -389,8 +389,14 @@ class ExtractMethodRefactoringImpl extends RefactoringImpl
       }
     }
     // done
-    addLibraryImports(change, libraryElement, librariesToImport);
+    addLibraryImports(session.resourceProvider.pathContext, change,
+        libraryElement, librariesToImport);
     return change;
+  }
+
+  @override
+  bool isAvailable() {
+    return !_checkSelection().hasFatalError;
   }
 
   @override

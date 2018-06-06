@@ -67,150 +67,6 @@ List<dynamic> _metadata(reflectee) native 'DeclarationMirror_metadata';
 
 bool _subtypeTest(Type a, Type b) native 'TypeMirror_subtypeTest';
 
-class _AccessorCacheAssociation<T extends Function> {
-  String key;
-  T value;
-  bool usedSinceGrowth = true;
-  _AccessorCacheAssociation(this.key, this.value);
-}
-
-/**
- * A map that will grow as associations are added but will prefer to evict
- * associations that have not been used since the last growth when needing to
- * grow again. Implemented as an open addressing hash table.
- */
-class _AccessorCache<T extends Function> {
-  List<_AccessorCacheAssociation<T>> table;
-  int shift;
-  int mask;
-  int capacity; // Max number of associations before we start evicting/growing.
-  int size = 0; // Current number of associations.
-
-  /**
-   * Create a cache whose capacity is 75% of 2^shift.
-   */
-  _AccessorCache.withInitialShift(int shift) {
-    // The scheme used here for handling collisions relies on there always
-    // being at least one empty slot.
-    if (shift < 1) {
-      throw new _InternalMirrorError("_AccessorCache requires a shift >= 1");
-    }
-    initWithShift(shift);
-  }
-
-  void initWithShift(int shift) {
-    this.shift = shift;
-    this.mask = (1 << shift) - 1;
-    this.capacity = (1 << shift) * 3 ~/ 4;
-    this.table = new List<_AccessorCacheAssociation<T>>(1 << shift);
-    assert(table.length > capacity);
-  }
-
-  int scanFor(String key) {
-    var start = key.hashCode & mask;
-    var index = start;
-    do {
-      var assoc = table[index];
-      if (null == assoc || assoc.key == key) {
-        return index;
-      }
-      index = (index + 1) & mask;
-    } while (index != start);
-    // Should never happen because we start evicting associations before the
-    // table is full.
-    throw new _InternalMirrorError("Internal error: _AccessorCache table full");
-  }
-
-  int scanForEmpty(String key) {
-    var start = key.hashCode & mask;
-    var index = start;
-    do {
-      if (null == table[index]) {
-        return index;
-      }
-      index = (index + 1) & mask;
-    } while (index != start);
-    // Should never happen because we start evicting associations before the
-    // table is full.
-    throw new _InternalMirrorError("Internal error: _AccessorCache table full");
-  }
-
-  void fixCollisionsAfter(int start) {
-    var assoc;
-    var index = (start + 1) & mask;
-    while (null != (assoc = table[index])) {
-      var newIndex = scanFor(assoc.key);
-      if (newIndex != index) {
-        assert(table[newIndex] == null);
-        table[newIndex] = assoc;
-        table[index] = null;
-      }
-      index = (index + 1) & mask;
-    }
-  }
-
-  void grow() {
-    var oldTable = table;
-
-    initWithShift(shift + 1);
-
-    for (int oldIndex = 0; oldIndex < oldTable.length; oldIndex++) {
-      var assoc = oldTable[oldIndex];
-      if (assoc != null) {
-        var newIndex = scanForEmpty(assoc.key);
-        assoc.usedSinceGrowth = false;
-        table[newIndex] = assoc;
-      }
-    }
-  }
-
-  void tryToShrinkOtherwiseGrow() {
-    // Remove any associations not accessed since the last growth. If we are
-    // unable to free any slots, grow.
-    bool needToGrow = true;
-    for (int i = 0; i < table.length; i++) {
-      var assoc = table[i];
-      if (null != assoc && (!assoc.usedSinceGrowth || null == assoc.value)) {
-        table[i] = null;
-        size--;
-        fixCollisionsAfter(i);
-        needToGrow = false;
-      }
-    }
-    if (needToGrow) grow();
-  }
-
-  operator []=(String key, T value) {
-    int index = scanFor(key);
-    var assoc = table[index];
-    if (null != assoc) {
-      // Existing key, replace value.
-      assert(assoc.key == key);
-      assoc.value = value;
-      assoc.usedSinceGrowth = true;
-    } else {
-      // New key.
-      var newAssoc = new _AccessorCacheAssociation(key, value);
-      if (size == capacity) {
-        // No free slots.
-        tryToShrinkOtherwiseGrow();
-        index = scanFor(key);
-        assert(table[index] == null);
-      }
-      table[index] = newAssoc;
-      size++;
-    }
-  }
-
-  T operator [](String key) {
-    var index = scanFor(key);
-    var assoc = table[index];
-    if (null == assoc) return null;
-    assoc.usedSinceGrowth = true;
-    return assoc.value;
-  }
-}
-
 class _LocalMirrorSystem extends MirrorSystem {
   final TypeMirror dynamicType = new _SpecialTypeMirror('dynamic');
   final TypeMirror voidType = new _SpecialTypeMirror('void');
@@ -269,6 +125,17 @@ class _LocalIsolateMirror extends _LocalMirror implements IsolateMirror {
   bool get isCurrent => true;
 
   String toString() => "IsolateMirror on '$debugName'";
+
+  Future<LibraryMirror> loadUri(Uri uri) async {
+    var result = _loadUri(uri.toString());
+    if (result == null) {
+      // Censored library.
+      throw new Exception("Cannot load $uri");
+    }
+    return result;
+  }
+
+  static LibraryMirror _loadUri(String uri) native "IsolateMirror_loadUri";
 }
 
 class _SyntheticAccessor implements MethodMirror {
@@ -425,88 +292,14 @@ class _LocalInstanceMirror extends _LocalObjectMirror
     return identityHashCode(_reflectee) ^ 0x36363636;
   }
 
-  static var _getFieldClosures =
-      new _AccessorCache<dynamic Function(dynamic)>.withInitialShift(4);
-  static var _setFieldClosures =
-      new _AccessorCache<dynamic Function(dynamic, dynamic)>.withInitialShift(
-          4);
-
-  _createGetterClosure(unwrapped) {
-    var atPosition = unwrapped.indexOf('@');
-    if (atPosition == -1) {
-      // Public symbol.
-      return _eval('(x) => x.$unwrapped', null);
-    } else {
-      // Private symbol.
-      var withoutKey = unwrapped.substring(0, atPosition);
-      var privateKey = unwrapped.substring(atPosition);
-      return _eval('(x) => x.$withoutKey', privateKey);
-    }
-  }
-
-  _getFieldSlow(unwrapped) {
-    // Slow path factored out to give the fast path a better chance at being
-    // inlined.
-    var result = reflect(_invokeGetter(_reflectee, unwrapped));
-    // Wait until success to avoid creating closures for non-existent getters,
-    // and defer the creation until the next getField invocation.
-    // o.<operator> is not valid Dart and will cause a compilation error, so
-    // don't attempt to generate such a closure.
-    bool isOperator = _LocalMethodMirror._operators.contains(unwrapped);
-    if (!isOperator) {
-      _getFieldClosures[unwrapped] = (receiver) {
-        var getterClosure = _createGetterClosure(unwrapped);
-        _getFieldClosures[unwrapped] = getterClosure;
-        return getterClosure(receiver);
-      };
-    }
-    return result;
-  }
-
   InstanceMirror getField(Symbol memberName) {
-    var unwrapped = _n(memberName);
-    var f = _getFieldClosures[unwrapped];
-    return (f == null) ? _getFieldSlow(unwrapped) : reflect(f(_reflectee));
-  }
-
-  _createSetterClosure(unwrapped) {
-    var atPosition = unwrapped.indexOf('@');
-    if (atPosition == -1) {
-      // Public symbol.
-      return _eval('(x, v) => x.$unwrapped = v', null);
-    } else {
-      // Private symbol.
-      var withoutKey = unwrapped.substring(0, atPosition);
-      var privateKey = unwrapped.substring(atPosition);
-      return _eval('(x, v) => x.$withoutKey = v', privateKey);
-    }
-  }
-
-  _setFieldSlow(unwrapped, arg) {
-    // Slow path factored out to give the fast path a better chance at being
-    // inlined.
-    _invokeSetter(_reflectee, unwrapped, arg);
-    var result = reflect(arg);
-    // Wait until success to avoid creating closures for non-existent setters.
-    // and defer the creation until the next setField invocation.
-    _setFieldClosures[unwrapped] = (receiver, argument) {
-      var setterClosure = _createSetterClosure(unwrapped);
-      _setFieldClosures[unwrapped] = setterClosure;
-      return setterClosure(receiver, argument);
-    };
-    return result;
+    return reflect(_invokeGetter(_reflectee, _n(memberName)));
   }
 
   InstanceMirror setField(Symbol memberName, arg) {
-    var unwrapped = _n(memberName);
-    var f = _setFieldClosures[unwrapped];
-    return (f == null)
-        ? _setFieldSlow(unwrapped, arg)
-        : reflect(f(_reflectee, arg));
+    _invokeSetter(_reflectee, _n(memberName), arg);
+    return reflect(arg);
   }
-
-  static _eval(expression, privateKey)
-      native "Mirrors_evalInLibraryWithPrivateKey";
 
   // Override to include the receiver in the arguments.
   InstanceMirror invoke(Symbol memberName, List positionalArguments,
@@ -574,7 +367,16 @@ class _LocalClassMirror extends _LocalObjectMirror
   DeclarationMirror _owner;
   final bool isAbstract;
   final bool _isGeneric;
+
+  // Only used for Dart 1 named mixin applications.
+  // TODO(alexmarkov): Clean up after Dart 1 is gone.
   final bool _isMixinAlias;
+
+  // Since Dart 2, mixins are erased by kernel transformation.
+  // Resulting classes have this flag set, and mixed-in type is pulled into
+  // the end of interfaces list.
+  final bool _isTransformedMixinApplication;
+
   final bool _isGenericDeclaration;
   final bool isEnum;
   Type _instantiator;
@@ -587,6 +389,7 @@ class _LocalClassMirror extends _LocalObjectMirror
       this.isAbstract,
       this._isGeneric,
       this._isMixinAlias,
+      this._isTransformedMixinApplication,
       this._isGenericDeclaration,
       this.isEnum)
       : this._simpleName = _s(simpleName),
@@ -658,11 +461,18 @@ class _LocalClassMirror extends _LocalObjectMirror
   var _superinterfaces;
   List<ClassMirror> get superinterfaces {
     if (_superinterfaces == null) {
-      _superinterfaces = isOriginalDeclaration
+      var interfaceTypes = isOriginalDeclaration
           ? _nativeInterfaces(_reflectedType)
           : _nativeInterfacesInstantiated(_reflectedType);
-      _superinterfaces = new UnmodifiableListView<ClassMirror>(
-          _superinterfaces.map(reflectType));
+      if (_isTransformedMixinApplication) {
+        interfaceTypes = interfaceTypes.sublist(0, interfaceTypes.length - 1);
+      }
+      var interfaceMirrors = new List<ClassMirror>();
+      for (var interfaceType in interfaceTypes) {
+        interfaceMirrors.add(reflectType(interfaceType));
+      }
+      _superinterfaces =
+          new UnmodifiableListView<ClassMirror>(interfaceMirrors);
     }
     return _superinterfaces;
   }
@@ -784,6 +594,7 @@ class _LocalClassMirror extends _LocalObjectMirror
         new UnmodifiableMapView<Symbol, DeclarationMirror>(decls);
   }
 
+  // Note: returns correct result only for Dart 1 anonymous mixin applications.
   bool get _isAnonymousMixinApplication {
     if (_isMixinAlias) return false; // Named mixin application.
     if (mixin == this) return false; // Not a mixin application.
@@ -793,7 +604,7 @@ class _LocalClassMirror extends _LocalObjectMirror
   List<TypeVariableMirror> _typeVariables;
   List<TypeVariableMirror> get typeVariables {
     if (_typeVariables == null) {
-      if (_isAnonymousMixinApplication) {
+      if (!_isTransformedMixinApplication && _isAnonymousMixinApplication) {
         return _typeVariables = const <TypeVariableMirror>[];
       }
       _typeVariables = new List<TypeVariableMirror>();
@@ -814,7 +625,8 @@ class _LocalClassMirror extends _LocalObjectMirror
   List<TypeMirror> _typeArguments;
   List<TypeMirror> get typeArguments {
     if (_typeArguments == null) {
-      if (_isGenericDeclaration || _isAnonymousMixinApplication) {
+      if (_isGenericDeclaration ||
+          (!_isTransformedMixinApplication && _isAnonymousMixinApplication)) {
         _typeArguments = const <TypeMirror>[];
       } else {
         _typeArguments = new UnmodifiableListView<TypeMirror>(
@@ -948,7 +760,7 @@ class _LocalFunctionTypeMirror extends _LocalClassMirror
   final _functionReflectee;
   _LocalFunctionTypeMirror(reflectee, this._functionReflectee, reflectedType)
       : super(reflectee, reflectedType, null, null, false, false, false, false,
-            false);
+            false, false);
 
   bool get _isAnonymousMixinApplication => false;
 
@@ -1311,12 +1123,14 @@ class _LocalLibraryDependencyMirror extends _LocalMirror
   _LocalLibraryDependencyMirror(
       this.sourceLibrary,
       this._targetMirrorOrPrefix,
-      this.combinators,
+      List<dynamic> mutableCombinators,
       prefixString,
       this.isImport,
       this.isDeferred,
       List<dynamic> unwrappedMetadata)
       : prefix = _s(prefixString),
+        combinators = new UnmodifiableListView<CombinatorMirror>(
+            mutableCombinators.cast<CombinatorMirror>()),
         metadata = new UnmodifiableListView<InstanceMirror>(
             unwrappedMetadata.map(reflect));
 
@@ -1354,7 +1168,8 @@ class _LocalCombinatorMirror extends _LocalMirror implements CombinatorMirror {
   final bool isShow;
 
   _LocalCombinatorMirror(identifierString, this.isShow)
-      : this.identifiers = [_s(identifierString)];
+      : this.identifiers =
+            new UnmodifiableListView<Symbol>(<Symbol>[_s(identifierString)]);
 
   bool get isHide => !isShow;
 }

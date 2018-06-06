@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:front_end/src/fasta/util/link.dart' show Link;
+
 import '../closure.dart';
 import '../common.dart';
 import '../compiler.dart' show Compiler;
@@ -19,7 +21,7 @@ import '../types/abstract_value_domain.dart';
 import '../universe/selector.dart' show Selector;
 import '../universe/side_effects.dart' show SideEffects;
 import '../util/util.dart';
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'invoke_dynamic_specializers.dart';
 import 'validate.dart';
 
@@ -207,9 +209,13 @@ class HGraph {
   HBasicBlock exit;
   HThis thisInstruction;
 
-  /// `true` if a sync*/async/async* method is split into an entry and a body
-  /// and this graph is for the entry, which should not be rewritten.
-  bool isGeneratorEntry = false;
+  /// `true` if this graph should be transformed by a sync*/async/async*
+  /// rewrite.
+  bool needsAsyncRewrite = false;
+
+  /// If this function requires an async rewrite, this is the element type of
+  /// the generator.
+  DartType asyncElementType;
 
   /// Receiver parameter, set for methods using interceptor calling convention.
   HParameterValue explicitReceiverParameter;
@@ -256,7 +262,7 @@ class HGraph {
     return result;
   }
 
-  HConstant addConstant(ConstantValue constant, ClosedWorld closedWorld,
+  HConstant addConstant(ConstantValue constant, JClosedWorld closedWorld,
       {SourceInformation sourceInformation}) {
     HConstant result = constants[constant];
     // TODO(johnniwinther): Support source information per constant reference.
@@ -283,43 +289,44 @@ class HGraph {
       OutputUnit unit,
       SourceInformation sourceInformation,
       Compiler compiler,
-      ClosedWorld closedWorld) {
+      JClosedWorld closedWorld) {
     ConstantValue wrapper = new DeferredGlobalConstantValue(constant, unit);
     compiler.backend.outputUnitData.registerConstantDeferredUse(wrapper, unit);
     return addConstant(wrapper, closedWorld,
         sourceInformation: sourceInformation);
   }
 
-  HConstant addConstantInt(int i, ClosedWorld closedWorld) {
-    return addConstant(closedWorld.constantSystem.createInt(i), closedWorld);
+  HConstant addConstantInt(int i, JClosedWorld closedWorld) {
+    return addConstant(
+        closedWorld.constantSystem.createIntFromInt(i), closedWorld);
   }
 
-  HConstant addConstantDouble(double d, ClosedWorld closedWorld) {
+  HConstant addConstantDouble(double d, JClosedWorld closedWorld) {
     return addConstant(closedWorld.constantSystem.createDouble(d), closedWorld);
   }
 
-  HConstant addConstantString(String str, ClosedWorld closedWorld) {
+  HConstant addConstantString(String str, JClosedWorld closedWorld) {
     return addConstant(
         closedWorld.constantSystem.createString(str), closedWorld);
   }
 
-  HConstant addConstantStringFromName(js.Name name, ClosedWorld closedWorld) {
+  HConstant addConstantStringFromName(js.Name name, JClosedWorld closedWorld) {
     return addConstant(
         new SyntheticConstantValue(
             SyntheticConstantKind.NAME, js.quoteName(name)),
         closedWorld);
   }
 
-  HConstant addConstantBool(bool value, ClosedWorld closedWorld) {
+  HConstant addConstantBool(bool value, JClosedWorld closedWorld) {
     return addConstant(
         closedWorld.constantSystem.createBool(value), closedWorld);
   }
 
-  HConstant addConstantNull(ClosedWorld closedWorld) {
+  HConstant addConstantNull(JClosedWorld closedWorld) {
     return addConstant(closedWorld.constantSystem.createNull(), closedWorld);
   }
 
-  HConstant addConstantUnreachable(ClosedWorld closedWorld) {
+  HConstant addConstantUnreachable(JClosedWorld closedWorld) {
     // A constant with an empty type used as the HInstruction of an expression
     // in an unreachable context.
     return addConstant(
@@ -1003,9 +1010,8 @@ abstract class HInstruction implements Spannable {
   /// Does this node potentially affect control flow.
   bool isControlFlow() => false;
 
-  bool isExact(AbstractValueDomain domain) => domain.isExact(instructionType);
-
-  bool isValue(AbstractValueDomain domain) => domain.isValue(instructionType);
+  bool isValue(AbstractValueDomain domain) =>
+      domain.isPrimitiveValue(instructionType);
 
   bool canBeNull(AbstractValueDomain domain) =>
       domain.canBeNull(instructionType);
@@ -1096,7 +1102,7 @@ abstract class HInstruction implements Spannable {
   AbstractValue instructionType;
 
   Selector get selector => null;
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => null;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => null;
   bool onlyThrowsNSM() => false;
 
   bool isInBasicBlock() => block != null;
@@ -1228,7 +1234,7 @@ abstract class HInstruction implements Spannable {
   bool isConstantFalse() => false;
   bool isConstantTrue() => false;
 
-  bool isInterceptor(ClosedWorld closedWorld) => false;
+  bool isInterceptor(JClosedWorld closedWorld) => false;
 
   bool isValid() {
     HValidator validator = new HValidator();
@@ -1254,7 +1260,7 @@ abstract class HInstruction implements Spannable {
     return false;
   }
 
-  HInstruction convertType(ClosedWorld closedWorld, DartType type, int kind) {
+  HInstruction convertType(JClosedWorld closedWorld, DartType type, int kind) {
     if (type == null) return this;
     type = type.unaliased;
     // Only the builder knows how to create [HTypeConversion]
@@ -1437,7 +1443,7 @@ class HRef extends HInstruction {
   HInstruction get value => inputs[0];
 
   @override
-  HInstruction convertType(ClosedWorld closedWorld, DartType type, int kind) {
+  HInstruction convertType(JClosedWorld closedWorld, DartType type, int kind) {
     HInstruction converted = value.convertType(closedWorld, type, kind);
     if (converted == value) return this;
     HTypeConversion conversion = converted;
@@ -1549,7 +1555,7 @@ class HCreate extends HInstruction {
   /// we have to register the instantiated type in the code generator. The
   /// [instructionType] of this node is not enough, because we also need the
   /// type arguments. See also [SsaFromAstMixin.currentInlinedInstantiations].
-  List<DartType> instantiatedTypes;
+  List<InterfaceType> instantiatedTypes;
 
   /// If this node creates a closure class, [callMethod] is the call method of
   /// the closure class.
@@ -1622,7 +1628,7 @@ abstract class HInvokeDynamic extends HInvoke {
   }
   toString() => 'invoke dynamic: selector=$selector, mask=$mask';
   HInstruction get receiver => inputs[0];
-  HInstruction getDartReceiver(ClosedWorld closedWorld) {
+  HInstruction getDartReceiver(JClosedWorld closedWorld) {
     return isCallOnInterceptor(closedWorld) ? inputs[1] : inputs[0];
   }
 
@@ -1632,7 +1638,7 @@ abstract class HInvokeDynamic extends HInvoke {
   /**
    * Returns whether this call is on an interceptor object.
    */
-  bool isCallOnInterceptor(ClosedWorld closedWorld) {
+  bool isCallOnInterceptor(JClosedWorld closedWorld) {
     return isInterceptedCall && receiver.isInterceptor(closedWorld);
   }
 
@@ -1753,7 +1759,7 @@ class HInvokeStatic extends HInvoke {
   /// contains the type(s) used in the (Dart) `New` expression(s). The
   /// [instructionType] of this node is not enough, because we also need the
   /// type arguments. See also [SsaFromAstMixin.currentInlinedInstantiations].
-  List<DartType> instantiatedTypes;
+  List<InterfaceType> instantiatedTypes;
 
   /** The first input must be the target. */
   HInvokeStatic(this.element, inputs, AbstractValue type, this.typeArguments,
@@ -1791,14 +1797,14 @@ class HInvokeSuper extends HInvokeStatic {
   }
 
   HInstruction get receiver => inputs[0];
-  HInstruction getDartReceiver(ClosedWorld closedWorld) {
+  HInstruction getDartReceiver(JClosedWorld closedWorld) {
     return isCallOnInterceptor(closedWorld) ? inputs[1] : inputs[0];
   }
 
   /**
    * Returns whether this call is on an interceptor object.
    */
-  bool isCallOnInterceptor(ClosedWorld closedWorld) {
+  bool isCallOnInterceptor(JClosedWorld closedWorld) {
     return isInterceptedCall && receiver.isInterceptor(closedWorld);
   }
 
@@ -1873,7 +1879,7 @@ class HFieldGet extends HFieldAccess {
     }
   }
 
-  bool isInterceptor(ClosedWorld closedWorld) {
+  bool isInterceptor(JClosedWorld closedWorld) {
     if (sourceElement == null) return false;
     // In case of a closure inside an interceptor class, [:this:] is
     // stored in the generated closure class, and accessed through a
@@ -1888,7 +1894,7 @@ class HFieldGet extends HFieldAccess {
 
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
   bool get isNullCheck => element == null;
 
@@ -1911,7 +1917,7 @@ class HFieldSet extends HFieldAccess {
 
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
 
   HInstruction get value => inputs[1];
@@ -1939,7 +1945,7 @@ class HGetLength extends HInstruction {
 
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
 
   accept(HVisitor visitor) => visitor.visitGetLength(this);
@@ -1992,7 +1998,7 @@ class HReadModifyWrite extends HLateInstruction {
 
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
 
   HInstruction get value => inputs[1];
@@ -2504,7 +2510,7 @@ class HConstant extends HInstruction {
   bool isConstantFalse() => constant.isFalse;
   bool isConstantTrue() => constant.isTrue;
 
-  bool isInterceptor(ClosedWorld closedWorld) => constant.isInterceptor;
+  bool isInterceptor(JClosedWorld closedWorld) => constant.isInterceptor;
 
   // Maybe avoid this if the literal is big?
   bool isCodeMotionInvariant() => true;
@@ -2575,7 +2581,7 @@ class HThis extends HParameterValue {
 
   bool isCodeMotionInvariant() => true;
 
-  bool isInterceptor(ClosedWorld closedWorld) {
+  bool isInterceptor(JClosedWorld closedWorld) {
     return closedWorld.interceptorData
         .isInterceptedClass(sourceElement.enclosingClass);
   }
@@ -2791,7 +2797,7 @@ class HInterceptor extends HInstruction {
     inputs.add(constant);
   }
 
-  bool isInterceptor(ClosedWorld closedWorld) => true;
+  bool isInterceptor(JClosedWorld closedWorld) => true;
 
   int typeCode() => HInstruction.INTERCEPTOR_TYPECODE;
   bool typeEquals(other) => other is HInterceptor;
@@ -2827,7 +2833,7 @@ class HOneShotInterceptor extends HInvokeDynamic {
     assert(inputs[0].isNull(domain));
     assert(selector.callStructure.typeArgumentCount == typeArguments.length);
   }
-  bool isCallOnInterceptor(ClosedWorld closedWorld) => true;
+  bool isCallOnInterceptor(JClosedWorld closedWorld) => true;
 
   String toString() => 'one shot interceptor: selector=$selector, mask=$mask';
   accept(HVisitor visitor) => visitor.visitOneShotInterceptor(this);
@@ -2907,7 +2913,7 @@ class HIndex extends HInstruction {
   // TODO(27272): Make HIndex dependent on bounds checking.
   bool get isMovable => false;
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 
@@ -2940,7 +2946,7 @@ class HIndexAssign extends HInstruction {
   // TODO(27272): Make HIndex dependent on bounds checking.
   bool get isMovable => false;
 
-  HInstruction getDartReceiver(ClosedWorld closedWorld) => receiver;
+  HInstruction getDartReceiver(JClosedWorld closedWorld) => receiver;
   bool onlyThrowsNSM() => true;
   bool canThrow(AbstractValueDomain domain) => receiver.canBeNull(domain);
 }
@@ -3128,7 +3134,7 @@ class HTypeConversion extends HCheck {
 
   HInstruction get checkedInput => super.checkedInput;
 
-  HInstruction convertType(ClosedWorld closedWorld, DartType type, int kind) {
+  HInstruction convertType(JClosedWorld closedWorld, DartType type, int kind) {
     if (typeExpression == type) {
       // Don't omit a boolean conversion (which doesn't allow `null`) unless
       // this type conversion is already a boolean conversion.
@@ -3162,6 +3168,42 @@ class HTypeConversion extends HCheck {
         typeExpression == other.typeExpression &&
         checkedType == other.checkedType &&
         receiverTypeCheckSelector == other.receiverTypeCheckSelector;
+  }
+
+  bool isRedundant(JClosedWorld closedWorld) {
+    AbstractValueDomain abstractValueDomain = closedWorld.abstractValueDomain;
+    DartType type = typeExpression;
+    if (type != null) {
+      if (type.isMalformed) {
+        // Malformed types are treated as dynamic statically, but should
+        // throw a type error at runtime.
+        return false;
+      }
+      if (type.isTypeVariable) {
+        return false;
+      }
+      if (type.isFutureOr) {
+        // `null` always passes type conversion.
+        if (checkedInput.isNull(abstractValueDomain)) return true;
+        // TODO(johnniwinther): Optimize FutureOr type conversions.
+        return false;
+      }
+      if (!type.treatAsRaw) {
+        // `null` always passes type conversion.
+        if (checkedInput.isNull(abstractValueDomain)) return true;
+        return false;
+      }
+      if (type.isFunctionType) {
+        // `null` always passes type conversion.
+        if (checkedInput.isNull(abstractValueDomain)) return true;
+        // TODO(johnniwinther): Optimize function type conversions.
+        return false;
+      }
+    }
+    // Type is refined from `dynamic`, so it might become non-redundant.
+    if (abstractValueDomain.containsAll(checkedType)) return false;
+    AbstractValue inputType = checkedInput.instructionType;
+    return abstractValueDomain.isIn(inputType, checkedType);
   }
 
   String toString() => 'HTypeConversion(type=$typeExpression, kind=$kind, '
@@ -3204,6 +3246,13 @@ class HTypeKnown extends HCheck {
   bool dataEquals(HTypeKnown other) {
     return knownType == other.knownType &&
         instructionType == other.instructionType;
+  }
+
+  bool isRedundant(JClosedWorld closedWorld) {
+    AbstractValueDomain abstractValueDomain = closedWorld.abstractValueDomain;
+    if (abstractValueDomain.containsAll(knownType)) return false;
+    AbstractValue inputType = checkedInput.instructionType;
+    return abstractValueDomain.isIn(inputType, knownType);
   }
 }
 

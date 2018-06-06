@@ -1,4 +1,7 @@
 {
+  "global": {
+    "chrome": "65"
+  },
   "filesets": {
     "analyzer": [
       "out/ReleaseX64/",
@@ -18,7 +21,23 @@
       "runtime/tests/",
       "samples-dev/",
       "samples/",
-      "tests/",
+      "tests/angular/",
+      "tests/co19/",
+      "tests/compiler/",
+      "tests/corelib/",
+      "tests/corelib_2/",
+      "tests/dart/",
+      "tests/html/",
+      "tests/isolate/",
+      "tests/kernel/",
+      "tests/language/",
+      "tests/language_2/",
+      "tests/lib/",
+      "tests/lib_2/",
+      "tests/light_unittest.dart",
+      "tests/search/",
+      "tests/standalone/",
+      "tests/standalone_2/",
       "third_party/d8/",
       "third_party/observatory_pub_packages/packages/web_components/",
       "third_party/pkg/",
@@ -417,6 +436,29 @@
     },
     {
       "builders": [
+        "app-kernel-linux-debug-x64",
+        "app-kernel-linux-product-x64",
+        "app-kernel-linux-release-x64"
+      ],
+      "meta": {
+        "description": "This configuration is used by the vm kernel app builder group."
+      },
+      "steps": [
+        {
+          "name": "build dart",
+          "script": "tools/build.py",
+          "arguments": [
+            "runtime_kernel"
+          ]
+        },
+        {
+          "name": "vm tests",
+          "arguments": ["--compiler=app_jitk", "--strong"]
+        }
+      ]
+    },
+    {
+      "builders": [
         "ddc-linux-release-chrome",
         "ddc-win-release-chrome"
       ],
@@ -695,6 +737,28 @@
     },
     {
       "builders": [
+        "vm-kernel-reload-linux-debug-x64",
+        "vm-kernel-reload-linux-release-x64",
+        "vm-kernel-reload-mac-debug-simdbc64",
+        "vm-kernel-reload-mac-release-simdbc64"
+      ],
+      "meta": {
+        "description": "This is the configuration for the kernel hot reload builders."
+      },
+      "steps": [
+        {
+          "name": "build dart",
+          "script": "tools/build.py",
+          "arguments": ["runtime_kernel"]
+        },
+        {
+          "name": "vm tests",
+          "arguments": ["--compiler=dartk", "--hot-reload", "--strong"]
+        }
+      ]
+    },
+    {
+      "builders": [
         "vm-reload-rollback-linux-debug-x64",
         "vm-reload-rollback-linux-release-x64"
       ],
@@ -719,6 +783,26 @@
     },
     {
       "builders": [
+        "vm-kernel-reload-rollback-linux-debug-x64",
+        "vm-kernel-reload-rollback-linux-release-x64"
+      ],
+      "meta": {
+        "description": "This is the configuration for kernel reload rollback builders."
+      },
+      "steps": [
+        {
+          "name": "build dart",
+          "script": "tools/build.py",
+          "arguments": ["runtime_kernel"]
+        },
+        {
+          "name": "vm tests",
+          "arguments": ["--compiler=dartk", "--hot-reload-rollback", "--strong"]
+        }
+      ]
+    },
+    {
+      "builders": [
         "dart2js-hostchecked-linux-ia32-d8"
       ],
       "meta": {
@@ -728,7 +812,7 @@
         {
           "name": "build dart",
           "script": "tools/build.py",
-          "arguments": ["dart2js_bot",  "compile_dart2js_platform"]
+          "arguments": ["dart2js_bot"]
         },
         {
           "name": "dart2js tests",
@@ -1613,14 +1697,8 @@
           "tests": ["pkg_tested"]
         },
         {
-          "name": "pub get dependencies",
-          "arguments": [
-            "--use-sdk",
-            "--compiler=none",
-            "--runtime=vm",
-            "--checked"
-          ],
-          "tests": ["pkgbuild"]
+          "name": "pub integration tests",
+          "script": "tools/bots/pub_integration_test.py"
         }
       ]
     },

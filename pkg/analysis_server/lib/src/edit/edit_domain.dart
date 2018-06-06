@@ -65,6 +65,11 @@ class EditDomainHandler extends AbstractRequestHandler {
   SearchEngine searchEngine;
 
   /**
+   * The workspace for rename refactorings.
+   */
+  RefactoringWorkspace refactoringWorkspace;
+
+  /**
    * The object used to manage uncompleted refactorings.
    */
   _RefactoringManager refactoringManager;
@@ -74,6 +79,8 @@ class EditDomainHandler extends AbstractRequestHandler {
    */
   EditDomainHandler(AnalysisServer server) : super(server) {
     searchEngine = server.searchEngine;
+    refactoringWorkspace =
+        new RefactoringWorkspace(server.driverMap.values, searchEngine);
     _newRefactoringManager();
   }
 
@@ -519,12 +526,18 @@ class EditDomainHandler extends AbstractRequestHandler {
       CompilationUnit unit = result.unit;
       LineInfo lineInfo = result.lineInfo;
       int requestLine = lineInfo.getLocation(offset).lineNumber;
+      List<engine.AnalysisError> errorsCopy = new List.from(result.errors);
       for (engine.AnalysisError error in result.errors) {
         int errorLine = lineInfo.getLocation(error.offset).lineNumber;
         if (errorLine == requestLine) {
           AstProvider astProvider = new AstProviderForDriver(driver);
           DartFixContext context = new _DartFixContextImpl(
-              server.resourceProvider, result.driver, astProvider, unit, error);
+              server.resourceProvider,
+              result.driver,
+              astProvider,
+              unit,
+              error,
+              errorsCopy);
           List<Fix> fixes =
               await new DefaultFixContributor().internalComputeFixes(context);
           if (fixes.isNotEmpty) {
@@ -556,22 +569,28 @@ class EditDomainHandler extends AbstractRequestHandler {
     int length = params.length;
     // add refactoring kinds
     List<RefactoringKind> kinds = <RefactoringKind>[];
-    // Try EXTRACT_WIDGETS.
+    // Check nodes.
     {
       var unit = await server.getResolvedCompilationUnit(file);
       var analysisSession = server.getAnalysisDriver(file)?.currentSession;
       if (unit != null && analysisSession != null) {
-        var refactoring = new ExtractWidgetRefactoring(
-            searchEngine, analysisSession, unit, offset);
-        if (refactoring.isAvailable()) {
+        // Try EXTRACT_LOCAL_VARIABLE.
+        if (new ExtractLocalRefactoring(unit, offset, length).isAvailable()) {
+          kinds.add(RefactoringKind.EXTRACT_LOCAL_VARIABLE);
+        }
+        // Try EXTRACT_METHOD.
+        if (new ExtractMethodRefactoring(
+                searchEngine, server.getAstProvider(file), unit, offset, length)
+            .isAvailable()) {
+          kinds.add(RefactoringKind.EXTRACT_METHOD);
+        }
+        // Try EXTRACT_WIDGETS.
+        if (new ExtractWidgetRefactoring(
+                searchEngine, analysisSession, unit, offset, length)
+            .isAvailable()) {
           kinds.add(RefactoringKind.EXTRACT_WIDGET);
         }
       }
-    }
-    // try EXTRACT_*
-    if (length != 0) {
-      kinds.add(RefactoringKind.EXTRACT_LOCAL_VARIABLE);
-      kinds.add(RefactoringKind.EXTRACT_METHOD);
     }
     // check elements
     {
@@ -589,7 +608,7 @@ class EditDomainHandler extends AbstractRequestHandler {
         // try RENAME
         {
           RenameRefactoring renameRefactoring = new RenameRefactoring(
-              searchEngine, server.getAstProvider(file), element);
+              refactoringWorkspace, server.getAstProvider(file), element);
           if (renameRefactoring != null) {
             kinds.add(RefactoringKind.RENAME);
           }
@@ -614,7 +633,7 @@ class EditDomainHandler extends AbstractRequestHandler {
    * Initializes [refactoringManager] with a new instance.
    */
   void _newRefactoringManager() {
-    refactoringManager = new _RefactoringManager(server, searchEngine);
+    refactoringManager = new _RefactoringManager(server, refactoringWorkspace);
   }
 
   static int _getNumberOfScanParseErrors(List<engine.AnalysisError> errors) {
@@ -672,8 +691,11 @@ class _DartFixContextImpl implements DartFixContext {
   @override
   final engine.AnalysisError error;
 
+  @override
+  final List<engine.AnalysisError> errors;
+
   _DartFixContextImpl(this.resourceProvider, this.analysisDriver,
-      this.astProvider, this.unit, this.error);
+      this.astProvider, this.unit, this.error, this.errors);
 
   @override
   GetTopLevelDeclarations get getTopLevelDeclarations =>
@@ -695,6 +717,7 @@ class _RefactoringManager {
       const <RefactoringProblem>[];
 
   final AnalysisServer server;
+  final RefactoringWorkspace refactoringWorkspace;
   final SearchEngine searchEngine;
   StreamSubscription subscriptionToReset;
 
@@ -711,7 +734,8 @@ class _RefactoringManager {
   Request request;
   EditGetRefactoringResult result;
 
-  _RefactoringManager(this.server, this.searchEngine) {
+  _RefactoringManager(this.server, this.refactoringWorkspace)
+      : searchEngine = refactoringWorkspace.searchEngine {
     _reset();
   }
 
@@ -912,7 +936,7 @@ class _RefactoringManager {
       if (unit != null) {
         var analysisSession = server.getAnalysisDriver(file).currentSession;
         refactoring = new ExtractWidgetRefactoring(
-            searchEngine, analysisSession, unit, offset);
+            searchEngine, analysisSession, unit, offset, length);
         feedback = new ExtractWidgetFeedback();
       }
     }
@@ -978,7 +1002,7 @@ class _RefactoringManager {
 
         // do create the refactoring
         refactoring = new RenameRefactoring(
-            searchEngine, server.getAstProvider(file), element);
+            refactoringWorkspace, server.getAstProvider(file), element);
         feedback = new RenameFeedback(
             feedbackOffset, feedbackLength, 'kind', 'oldName');
       }

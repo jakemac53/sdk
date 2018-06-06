@@ -15,7 +15,7 @@ import '../elements/entities.dart';
 import '../js/js.dart' as jsAst;
 import '../js_backend/js_backend.dart' show JavaScriptBackend, Namer;
 import '../universe/world_builder.dart' show CodegenWorldBuilder;
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'full_emitter/emitter.dart' as full_js_emitter;
 import 'program_builder/program_builder.dart';
 import 'startup_emitter/emitter.dart' as startup_js_emitter;
@@ -150,33 +150,26 @@ class CodeEmitterTask extends CompilerTask {
     // 'is$' method.
     typeTestRegistry.computeRequiredTypeChecks(backend.rtiChecksBuilder);
     // Compute the classes needed by RTI.
-    typeTestRegistry.computeRtiNeededClasses(backend.rtiSubstitutions,
-        backend.mirrorsData, backend.generatedCode.keys);
+    typeTestRegistry.computeRtiNeededClasses(
+        backend.rtiSubstitutions, backend.generatedCode.keys);
   }
 
   /// Creates the [Emitter] for this task.
-  void createEmitter(Namer namer, ClosedWorld closedWorld,
+  void createEmitter(Namer namer, JClosedWorld closedWorld,
       CodegenWorldBuilder codegenWorldBuilder, Sorter sorter) {
     measure(() {
       _nativeEmitter = new NativeEmitter(this, closedWorld, codegenWorldBuilder,
           backend.nativeCodegenEnqueuer);
       _emitter =
           _emitterFactory.createEmitter(this, namer, closedWorld, sorter);
-      metadataCollector = new MetadataCollector(
-          compiler.options,
-          compiler.reporter,
-          _emitter,
-          backend.constants,
-          backend.typeVariableCodegenAnalysis,
-          backend.mirrorsData,
-          backend.rtiEncoder,
-          codegenWorldBuilder);
+      metadataCollector = new MetadataCollector(compiler.options,
+          compiler.reporter, _emitter, backend.rtiEncoder, codegenWorldBuilder);
       typeTestRegistry = new TypeTestRegistry(compiler.options,
-          codegenWorldBuilder, closedWorld, closedWorld.elementEnvironment);
+          codegenWorldBuilder, closedWorld.elementEnvironment);
     });
   }
 
-  int assembleProgram(Namer namer, ClosedWorld closedWorld) {
+  int assembleProgram(Namer namer, JClosedWorld closedWorld) {
     return measure(() {
       _finalizeRti();
       ProgramBuilder programBuilder = new ProgramBuilder(
@@ -194,7 +187,6 @@ class CodeEmitterTask extends CompilerTask {
           backend.constants,
           closedWorld.nativeData,
           closedWorld.rtiNeed,
-          backend.mirrorsData,
           closedWorld.interceptorData,
           backend.superMemberData,
           typeTestRegistry.rtiChecks,
@@ -209,8 +201,7 @@ class CodeEmitterTask extends CompilerTask {
           backend.sourceInformationStrategy,
           compiler.backendStrategy.sorter,
           typeTestRegistry.rtiNeededClasses,
-          closedWorld.elementEnvironment.mainFunction,
-          isMockCompilation: compiler.isMockCompilation);
+          closedWorld.elementEnvironment.mainFunction);
       int size = emitter.emitProgram(programBuilder);
       // TODO(floitsch): we shouldn't need the `neededClasses` anymore.
       neededClasses = programBuilder.collector.neededClasses;
@@ -225,7 +216,7 @@ abstract class EmitterFactory {
 
   /// Create the [Emitter] for the emitter [task] that uses the given [namer].
   Emitter createEmitter(CodeEmitterTask task, Namer namer,
-      ClosedWorld closedWorld, Sorter sorter);
+      JClosedWorld closedWorld, Sorter sorter);
 }
 
 abstract class Emitter {

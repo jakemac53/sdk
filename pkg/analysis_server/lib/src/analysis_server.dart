@@ -108,7 +108,7 @@ class AnalysisServer {
    * The version of the analysis server. The value should be replaced
    * automatically during the build.
    */
-  static final String VERSION = '1.20.2';
+  static final String VERSION = '1.20.3';
 
   /**
    * The options of this server instance.
@@ -382,7 +382,7 @@ class AnalysisServer {
           sink = io.stdout;
         } else if (name.startsWith('file:')) {
           String path = name.substring('file:'.length);
-          sink = new io.File(path).openWrite(mode: io.FileMode.APPEND);
+          sink = new io.File(path).openWrite(mode: io.FileMode.append);
         }
       }
       _analysisPerformanceLogger = new PerformanceLog(sink);
@@ -601,20 +601,19 @@ class AnalysisServer {
    * otherwise in the first driver, otherwise `null` is returned.
    */
   Future<nd.AnalysisResult> getAnalysisResult(String path,
-      {bool sendCachedToStream: false}) async {
+      {bool sendCachedToStream: false}) {
     if (!AnalysisEngine.isDartFileName(path)) {
       return null;
     }
 
-    try {
-      nd.AnalysisDriver driver = getAnalysisDriver(path);
-      return await driver?.getResult(path,
-          sendCachedToStream: sendCachedToStream);
-    } catch (e) {
-      // Ignore the exception.
-      // We don't want to log the same exception again and again.
-      return null;
+    nd.AnalysisDriver driver = getAnalysisDriver(path);
+    if (driver == null) {
+      return new Future.value();
     }
+
+    return driver
+        .getResult(path, sendCachedToStream: sendCachedToStream)
+        .catchError((_) => null);
   }
 
   /**

@@ -220,6 +220,23 @@ abstract class IsolateMirror implements Mirror {
    *    reflected by [other].
    */
   bool operator ==(other);
+
+  /**
+   * Loads the library at the given uri into this isolate.
+   *
+   * WARNING: You are strongly encouraged to use Isolate.spawnUri instead when
+   * possible. IsolateMirror.loadUri should only be used when synchronous
+   * communication or shared state with dynamically loaded code is needed.
+   *
+   * If a library with the same canonicalized uri has already been loaded,
+   * the existing library will be returned. (The isolate will not load a new
+   * copy of the library.)
+   *
+   * This behavior is similar to the behavior of an import statement that
+   * appears in the root library, except that the import scope of the root
+   * library is not changed.
+   */
+  Future<LibraryMirror> loadUri(Uri uri);
 }
 
 /**
@@ -1241,6 +1258,7 @@ class Comment {
  * will ensure that the target `Bar` from the current library and from library
  * `foo` is available for reflection. See also [override].
  */
+@Deprecated("No longer has any effect. Will be removed in a later release.")
 class MirrorsUsed {
   // Note: the fields of this class are untyped.  This is because the most
   // convenient way to specify symbols today is using a single string. In

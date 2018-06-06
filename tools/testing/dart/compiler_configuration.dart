@@ -68,6 +68,9 @@ abstract class CompilerConfiguration {
       case Compiler.appJit:
         return new AppJitCompilerConfiguration(configuration);
 
+      case Compiler.appJitk:
+        return new AppJitCompilerConfiguration(configuration, useDfe: true);
+
       case Compiler.precompiler:
         return new PrecompilerCompilerConfiguration(configuration);
 
@@ -184,6 +187,7 @@ class NoneCompilerConfiguration extends CompilerConfiguration {
         args.add('--no-background-compilation');
       }
     } else {
+      args.add('--no-preview-dart-2');
       if (_isStrong) {
         args.add('--strong');
       }
@@ -498,7 +502,6 @@ class DevCompilerConfiguration extends CompilerConfiguration {
       List<String> ddcOptions,
       List<String> args) {
     var result = sharedOptions.toList()..addAll(ddcOptions);
-
     // The file being compiled is the last argument.
     result.add(args.last);
 
@@ -770,6 +773,7 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
       args.add('--preview-dart-2');
       args.addAll(_replaceDartFiles(arguments, tempKernelFile(tempDir)));
     } else {
+      args.add('--no-preview-dart-2');
       args.addAll(arguments);
     }
 
@@ -911,7 +915,11 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
 }
 
 class AppJitCompilerConfiguration extends CompilerConfiguration {
-  AppJitCompilerConfiguration(Configuration configuration)
+  // This boolean is used by the [VMTestSuite] for running cc tests via
+  // run_vm_tests.
+  final bool useDfe;
+
+  AppJitCompilerConfiguration(Configuration configuration, {this.useDfe: false})
       : super._subclass(configuration);
 
   int get timeoutMultiplier {
@@ -935,6 +943,11 @@ class AppJitCompilerConfiguration extends CompilerConfiguration {
     var exec = "${_configuration.buildDirectory}/dart";
     var snapshot = "$tempDir/out.jitsnapshot";
     var args = ["--snapshot=$snapshot", "--snapshot-kind=app-jit"];
+    if (useDfe) {
+      args.add("--preview-dart-2");
+    } else {
+      args.add("--no-preview-dart-2");
+    }
     args.addAll(arguments);
 
     return Command.compilation('app_jit', tempDir, bootstrapDependencies(),
@@ -966,6 +979,11 @@ class AppJitCompilerConfiguration extends CompilerConfiguration {
     if (_isChecked) {
       args.add('--enable_asserts');
       args.add('--enable_type_checks');
+    }
+    if (useDfe) {
+      args.add('--preview-dart-2');
+    } else {
+      args.add("--no-preview-dart-2");
     }
     args
       ..addAll(vmOptions)
@@ -1113,11 +1131,6 @@ abstract class VMKernelCompilerMixin {
     if (_isChecked || _useEnableAsserts) {
       args.add('--enable_asserts');
     }
-
-    // Pass environment variable to the gen_kernel script as
-    // arguments are not passed if gen_kernel runs in batch mode.
-    environmentOverrides = new Map.from(environmentOverrides);
-    environmentOverrides['DART_VM_FLAGS'] = '--limit-ints-to-64-bits';
 
     return Command.vmKernelCompilation(dillFile, true, bootstrapDependencies(),
         genKernel, args, environmentOverrides);

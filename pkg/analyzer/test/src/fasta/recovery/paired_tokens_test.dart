@@ -22,9 +22,56 @@ main() {
  */
 @reflectiveTest
 class AngleBracketsTest extends AbstractRecoveryTest {
+  void test_typeParameters_extraGt() {
+    testRecovery('''
+f<T>>() => null;
+''', [
+      ParserErrorCode.TOP_LEVEL_OPERATOR,
+      ParserErrorCode.MISSING_FUNCTION_PARAMETERS,
+      ParserErrorCode.MISSING_FUNCTION_BODY
+    ], '''
+f<T> > () => null;
+''', expectedErrorsInValidCode: [
+      ParserErrorCode.TOP_LEVEL_OPERATOR,
+      ParserErrorCode.MISSING_FUNCTION_PARAMETERS,
+      ParserErrorCode.MISSING_FUNCTION_BODY
+    ]);
+  }
+
+  void test_typeParameters_funct() {
+    testRecovery('''
+f<T extends Function()() => null;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+f<T extends Function()>() => null;
+''');
+  }
+
+  void test_typeParameters_funct2() {
+    testRecovery('''
+f<T extends Function<X>()() => null;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+f<T extends Function<X>()>() => null;
+''');
+  }
+
+  void test_typeParameters_gtEq() {
+    testRecovery('''
+f<T>=() => null;
+''', [ParserErrorCode.UNEXPECTED_TOKEN], '''
+f<T>() => null;
+''');
+  }
+
+  void test_typeParameters_gtGtEq() {
+    testRecovery('''
+f<T extends List<int>>=() => null;
+''', [ParserErrorCode.UNEXPECTED_TOKEN], '''
+f<T extends List<int>>() => null;
+''');
+  }
+
   @failingTest
   void test_typeArguments_inner_last() {
-    // Parser crashes
     testRecovery('''
 List<List<int>
 ''', [ScannerErrorCode.EXPECTED_TOKEN], '''
@@ -32,9 +79,16 @@ List<List<int>> _s_;
 ''');
   }
 
+  void test_typeArguments_inner_last2() {
+    testRecovery('''
+List<List<int> f;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+List<List<int>> f;
+''');
+  }
+
   @failingTest
   void test_typeArguments_inner_notLast() {
-    // Parser crashes
     testRecovery('''
 Map<List<int, List<String>>
 ''', [ScannerErrorCode.EXPECTED_TOKEN], '''
@@ -42,13 +96,53 @@ Map<List<int>, List<String>> _s_;
 ''');
   }
 
+  void test_typeArguments_inner_notLast2() {
+    // TODO(danrubel): Investigate better recovery.
+    testRecovery('''
+Map<List<int, List<String>> f;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+Map<List<int, List<String>>> f;
+''');
+  }
+
   @failingTest
   void test_typeArguments_outer_last() {
-    // Parser crashes
     testRecovery('''
 List<int
 ''', [ScannerErrorCode.EXPECTED_TOKEN], '''
 List<int> _s_;
+''');
+  }
+
+  void test_typeArguments_outer_last2() {
+    testRecovery('''
+List<int f;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+List<int> f;
+''');
+  }
+
+  void test_typeArguments_missing_comma() {
+    testRecovery('''
+List<int double> f;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+List<int, double> f;
+''');
+  }
+
+  void test_typeParameters_last() {
+    testRecovery('''
+f<T() => null;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+f<T>() => null;
+''');
+  }
+
+  void test_typeParameters_outer_last() {
+    testRecovery('''
+f<T extends List<int>() => null;
+''', [ParserErrorCode.EXPECTED_TOKEN], '''
+f<T extends List<int>>() => null;
 ''');
   }
 }
@@ -208,13 +302,13 @@ f(x) {
 ''');
   }
 
-  @failingTest
   void test_parameterList_class() {
     // Parser crashes
     testRecovery('''
 f(x
 class C {}
-''', [ScannerErrorCode.EXPECTED_TOKEN], '''
+''', [ScannerErrorCode.EXPECTED_TOKEN, ParserErrorCode.MISSING_FUNCTION_BODY],
+        '''
 f(x) {}
 class C {}
 ''');

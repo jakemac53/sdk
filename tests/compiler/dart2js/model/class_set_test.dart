@@ -12,8 +12,8 @@ import 'package:compiler/src/commandline_options.dart';
 import 'package:compiler/src/elements/entities.dart' show ClassEntity;
 import 'package:compiler/src/universe/class_set.dart';
 import 'package:compiler/src/util/enumset.dart';
-import 'package:compiler/src/util/util.dart';
 import 'package:compiler/src/world.dart';
+import 'package:front_end/src/fasta/util/link.dart' show Link;
 import '../type_test_helper.dart';
 
 void main() {
@@ -56,7 +56,7 @@ testIterators() async {
         new G();
       }
       """);
-  ClosedWorld world = env.closedWorld;
+  KClosedWorld world = env.kClosedWorld;
 
   ClassEntity A = env.getClass("A");
   ClassEntity B = env.getClass("B");
@@ -386,7 +386,7 @@ testForEach() async {
         new I();
       }
       """);
-  ClosedWorld world = env.closedWorld;
+  KClosedWorld world = env.kClosedWorld;
 
   ClassEntity A = env.getClass("A");
   ClassEntity B = env.getClass("B");
@@ -603,7 +603,7 @@ testClosures({bool strongMode}) async {
       """,
       options: strongMode ? [Flags.strongMode] : [],
       testBackendWorld: true);
-  ClosedWorld world = env.closedWorld;
+  JClosedWorld world = env.jClosedWorld;
 
   ClassEntity functionClass = world.commonElements.functionClass;
   ClassEntity closureClass = world.commonElements.closureClass;

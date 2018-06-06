@@ -17,15 +17,15 @@ static const field dynamic #errors = const <dynamic>["pkg/front_end/testcases/re
   A.foo() : m = 2;
   ^", "pkg/front_end/testcases/regress/issue_31299.dart:11:7: Error: Conflicts with constructor 'A.foo'.
   int foo(int a, int b) => a + b * m;
-      ^", "pkg/front_end/testcases/regress/issue_31299.dart:18:7: Error: Too many positional arguments to constructor: 0 allowed, 2 given.
+      ^", "pkg/front_end/testcases/regress/issue_31299.dart:18:7: Error: Too many positional arguments: 0 allowed, 2 given.
   new A.foo(1, 2);
-      ^", "pkg/front_end/testcases/regress/issue_31299.dart:15:11: Error: Too few positional arguments to method: 2 required, 0 given.
+      ^", "pkg/front_end/testcases/regress/issue_31299.dart:15:11: Error: Too few positional arguments: 2 required, 0 given.
   new A().foo();
           ^"]/* from null */;
 static method test() → dynamic {
   new self::A::•().{self::A::foo}();
   new self::A::•().{self::A::foo}(1, 2);
   new self::A::foo();
-  throw new core::NoSuchMethodError::withInvocation(null, new core::_InvocationMirror::_withType(#foo, 32, const <core::Type>[], <dynamic>[1, 2].toList(growable: false), core::Map::unmodifiable<core::Symbol, dynamic>(const <core::Symbol, dynamic>{})));
+  throw new core::NoSuchMethodError::withInvocation(null, new core::_InvocationMirror::_withType(#foo, 32, const <core::Type>[], core::List::unmodifiable<dynamic>(<dynamic>[1, 2]), core::Map::unmodifiable<core::Symbol, dynamic>(const <core::Symbol, dynamic>{})));
 }
 static method main() → dynamic {}

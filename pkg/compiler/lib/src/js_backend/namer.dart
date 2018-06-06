@@ -15,12 +15,10 @@ import '../common/names.dart' show Identifiers, Names, Selectors;
 import '../constants/values.dart';
 import '../common_elements.dart' show CommonElements, ElementEnvironment;
 import '../diagnostics/invariant.dart' show DEBUG_MODE;
-import '../elements/elements.dart' show Element, Elements, MemberElement;
 import '../elements/entities.dart';
 import '../elements/entity_utils.dart' as utils;
 import '../elements/jumps.dart';
 import '../elements/names.dart';
-import '../elements/resolution_types.dart';
 import '../elements/types.dart';
 import '../js/js.dart' as jsAst;
 import '../js_model/closure.dart';
@@ -29,7 +27,7 @@ import '../universe/call_structure.dart' show CallStructure;
 import '../universe/selector.dart' show Selector, SelectorKind;
 import '../universe/world_builder.dart' show CodegenWorldBuilder;
 import '../util/util.dart';
-import '../world.dart' show ClosedWorld;
+import '../world.dart' show JClosedWorld;
 import 'backend.dart';
 import 'constant_system_javascript.dart';
 import 'native_data.dart';
@@ -494,7 +492,7 @@ class Namer {
   static final RegExp IDENTIFIER = new RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$');
   static final RegExp NON_IDENTIFIER_CHAR = new RegExp(r'[^A-Za-z_0-9$]');
 
-  final ClosedWorld _closedWorld;
+  final JClosedWorld _closedWorld;
   final CodegenWorldBuilder _codegenWorldBuilder;
 
   RuntimeTypesEncoder _rtiEncoder;
@@ -769,7 +767,7 @@ class Namer {
   }
 
   String _proposeNameForConstructorBody(ConstructorBodyEntity method) {
-    String name = Elements.reconstructConstructorNameSourceString(method);
+    String name = utils.reconstructConstructorNameSourceString(method);
     // We include the method suffix on constructor bodies. It has no purpose,
     // but this way it produces the same names as previous versions of the
     // Namer class did.
@@ -1104,7 +1102,7 @@ class Namer {
   }
 
   jsAst.Name _disambiguateGlobalMember(MemberEntity element) {
-    return _disambiguateGlobal(element, _proposeNameForMember);
+    return _disambiguateGlobal<MemberEntity>(element, _proposeNameForMember);
   }
 
   jsAst.Name _disambiguateGlobalType(Entity element) {
@@ -1114,16 +1112,10 @@ class Namer {
   /// Returns the disambiguated name for a top-level or static element.
   ///
   /// The resulting name is unique within the global-member namespace.
-  jsAst.Name _disambiguateGlobal(
-      Entity element, String proposeName(Entity element)) {
+  jsAst.Name _disambiguateGlobal<T extends Entity>(
+      T element, String proposeName(T element)) {
     // TODO(asgerf): We can reuse more short names if we disambiguate with
     // a separate namespace for each of the global holder objects.
-    if (element is Element) {
-      // Ensures we only work on declarations. Non-[Element] entities do not
-      // have the declaration/implementation separation.
-      Element e = element;
-      element = e.declaration;
-    }
     jsAst.Name newName = userGlobals[element];
     if (newName == null) {
       String proposedName = proposeName(element);
@@ -1562,21 +1554,6 @@ class Namer {
   bool _isPropertyOfStaticStateHolder(MemberEntity element) {
     // TODO(ahe): Make sure this method's documentation is always true and
     // remove the word "intend".
-    if (element is MemberElement) {
-      // TODO(johnniwinther): Clean up this method to have a single semantics on
-      // entities.
-      return
-          // TODO(ahe): Re-write these tests to be positive (so it only returns
-          // true for static/top-level mutable fields). Right now, a number of
-          // other elements, such as bound closures also live in
-          // [staticStateHolder].
-          !element.isAccessor &&
-              !element.isClass &&
-              !element.isTypedef &&
-              !element.isConstructor &&
-              !element.isFunction &&
-              !element.isLibrary;
-    }
     return element.isField;
   }
 
@@ -1669,12 +1646,16 @@ class Namer {
 
   String get futureOrTypeTag => r'type';
 
-  Map<ResolutionFunctionType, jsAst.Name> functionTypeNameMap =
-      new HashMap<ResolutionFunctionType, jsAst.Name>();
+  // The name of the variable used to offset function signatures in deferred
+  // parts with the fast-startup emitter.
+  String get typesOffsetName => r'typesOffset';
+
+  Map<FunctionType, jsAst.Name> functionTypeNameMap =
+      new HashMap<FunctionType, jsAst.Name>();
 
   FunctionTypeNamer _functionTypeNamer;
 
-  jsAst.Name getFunctionTypeName(ResolutionFunctionType functionType) {
+  jsAst.Name getFunctionTypeName(FunctionType functionType) {
     return functionTypeNameMap.putIfAbsent(functionType, () {
       _functionTypeNamer ??= new FunctionTypeNamer(rtiEncoder);
       String proposedName = _functionTypeNamer.computeName(functionType);
@@ -1916,7 +1897,7 @@ class ConstantNamingVisitor implements ConstantValueVisitor {
   @override
   void visitInt(IntConstantValue constant, [_]) {
     // No `addRoot` since IntConstants are always inlined.
-    if (constant.intValue < 0) {
+    if (constant.intValue < BigInt.zero) {
       add('m${-constant.intValue}');
     } else {
       add('${constant.intValue}');
@@ -2111,7 +2092,11 @@ class ConstantCanonicalHasher implements ConstantValueVisitor<int, Null> {
 
   @override
   int visitInt(IntConstantValue constant, [_]) {
-    return _hashInt(constant.intValue);
+    BigInt value = constant.intValue;
+    if (value.toSigned(32) == value) {
+      return value.toUnsigned(32).toInt() & _MASK;
+    }
+    return _hashDouble(value.toDouble());
   }
 
   @override
@@ -2260,39 +2245,49 @@ class ConstantCanonicalHasher implements ConstantValueVisitor<int, Null> {
   }
 }
 
-class FunctionTypeNamer extends BaseResolutionDartTypeVisitor {
+class FunctionTypeNamer extends BaseDartTypeVisitor {
   final RuntimeTypesEncoder rtiEncoder;
   StringBuffer sb;
 
   FunctionTypeNamer(this.rtiEncoder);
 
-  String computeName(ResolutionDartType type) {
+  String computeName(DartType type) {
     sb = new StringBuffer();
     visit(type);
     return sb.toString();
   }
 
-  visit(covariant ResolutionDartType type, [_]) {
+  visit(DartType type, [_]) {
     type.accept(this, null);
   }
 
-  visitType(covariant ResolutionDartType type, _) {
-    sb.write(type.name);
+  visitType(DartType type, _) {}
+
+  visitInterfaceType(InterfaceType type, _) {
+    sb.write(type.element.name);
   }
 
-  visitFunctionType(covariant ResolutionFunctionType type, _) {
+  visitTypedefType(TypedefType type, _) {
+    sb.write(type.element.name);
+  }
+
+  visitTypeVariableType(TypeVariableType type, _) {
+    sb.write(type.element.name);
+  }
+
+  visitFunctionType(FunctionType type, _) {
     if (rtiEncoder.isSimpleFunctionType(type)) {
       sb.write('args${type.parameterTypes.length}');
       return;
     }
     visit(type.returnType);
     sb.write('_');
-    for (ResolutionDartType parameter in type.parameterTypes) {
+    for (DartType parameter in type.parameterTypes) {
       sb.write('_');
       visit(parameter);
     }
     bool first = false;
-    for (ResolutionDartType parameter in type.optionalParameterTypes) {
+    for (DartType parameter in type.optionalParameterTypes) {
       if (!first) {
         sb.write('_');
       }
@@ -2302,7 +2297,7 @@ class FunctionTypeNamer extends BaseResolutionDartTypeVisitor {
     }
     if (!type.namedParameterTypes.isEmpty) {
       first = false;
-      for (ResolutionDartType parameter in type.namedParameterTypes) {
+      for (DartType parameter in type.namedParameterTypes) {
         if (!first) {
           sb.write('_');
         }
