@@ -60,8 +60,7 @@ Future<List<int>> compile(InitializedCompilerState compilerState,
   processedOpts.inputs.addAll(inputs);
 
   var result = await generateKernel(processedOpts,
-      buildSummary: summaryOnly,
-      buildComponent: !summaryOnly);
+      buildSummary: summaryOnly, buildComponent: !summaryOnly);
 
   return summaryOnly ? result?.summary : serializeComponent(result?.component);
 }
