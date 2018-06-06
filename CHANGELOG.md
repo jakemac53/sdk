@@ -6,12 +6,24 @@
 
 #### Strong Mode
 
+### Dart VM
+
+* `async` functions now start synchronously by default.
+  Passing the `--no-sync-async` flag will produce the old behavior,
+  starting `async` functions asynchronously.
+
+### Tool Changes
+
+#### Pub
+
+#### Other Tools
+
+## 2.0.0-dev.60.0
+
 ### Core library changes
 
 * `dart:convert`
   * Allow `utf8.decoder.fuse(json.decoder)` to ignore leading Unicode BOM.
-
-### Dart VM
 
 ### Tool Changes
 
@@ -21,10 +33,6 @@
   ([issue 33182]).
 
 [issue 33182]: https://github.com/dart-lang/sdk/issues/33182
-
-#### Pub
-
-#### Other Tools
 
 ## 2.0.0-dev.59.0
 
@@ -109,6 +117,14 @@ void main() {
     `X509Certificate.sha1`.
   * Added `FileSystemEntity.fromRawPath` constructor to allow for
     the creation of `FileSystemEntity` using `Uint8List` buffers.
+
+### Dart VM
+
+* `async` functions now start synchronously when previewing Dart 2 with
+  `--preview-dart-2`.  Build tools (e.g., build_runner) may override the
+  default and/or allow developers to configure.  Passing the
+  `--no-sync-async` flag will produce the old behavior, starting `async`
+  functions asynchronously.
 
 ### Tool Changes
 

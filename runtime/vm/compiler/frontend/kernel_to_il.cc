@@ -487,6 +487,13 @@ String& TranslationHelper::DartSymbolObfuscate(StringIndex string_index) const {
   return result;
 }
 
+String& TranslationHelper::DartIdentifier(const Library& lib,
+                                          StringIndex string_index) {
+  String& name = DartString(string_index);
+  ManglePrivateName(lib, &name);
+  return name;
+}
+
 const String& TranslationHelper::DartClassName(NameIndex kernel_class) {
   ASSERT(IsClass(kernel_class));
   String& name = DartString(CanonicalNameString(kernel_class));
@@ -2205,16 +2212,6 @@ Fragment FlowGraphBuilder::NativeFunctionBody(intptr_t first_positional_offset,
       body += LoadLocal(LookupVariable(first_positional_offset));
       body += CreateArray();
       break;
-    case MethodRecognizer::kBigint_getDigits:
-      body += LoadLocal(scopes_->this_variable);
-      body += LoadNativeField(kind, Bigint::digits_offset(),
-                              Object::dynamic_type(), kTypedDataUint32ArrayCid);
-      break;
-    case MethodRecognizer::kBigint_getUsed:
-      body += LoadLocal(scopes_->this_variable);
-      body += LoadNativeField(kind, Bigint::used_offset(),
-                              Type::ZoneHandle(Z, Type::SmiType()), kSmiCid);
-      break;
     case MethodRecognizer::kLinkedHashMap_getIndex:
       body += LoadLocal(scopes_->this_variable);
       body += LoadNativeField(kind, LinkedHashMap::index_offset(),
@@ -2277,11 +2274,6 @@ Fragment FlowGraphBuilder::NativeFunctionBody(intptr_t first_positional_offset,
                                  LinkedHashMap::deleted_keys_offset(),
                                  kNoStoreBarrier);
       body += NullConstant();
-      break;
-    case MethodRecognizer::kBigint_getNeg:
-      body += LoadLocal(scopes_->this_variable);
-      body += LoadNativeField(kind, Bigint::neg_offset(),
-                              Type::ZoneHandle(Z, Type::BoolType()), kBoolCid);
       break;
     default: {
       String& name = String::ZoneHandle(Z, function.native_name());
@@ -2837,13 +2829,16 @@ RawObject* EvaluateMetadata(const Field& metadata_field) {
     Script& script = Script::Handle(Z, metadata_field.Script());
     helper.InitFromScript(script);
 
+    const Class& owner_class = Class::Handle(Z, metadata_field.Owner());
+    ActiveClass active_class;
+    ActiveClassScope active_class_scope(&active_class, &owner_class);
+
     StreamingFlowGraphBuilder streaming_flow_graph_builder(
         &helper, Script::Handle(Z, metadata_field.Script()), Z,
         TypedData::Handle(Z, metadata_field.KernelData()),
-        metadata_field.KernelDataProgramOffset());
-    const Class& owner_class = Class::Handle(Z, metadata_field.Owner());
+        metadata_field.KernelDataProgramOffset(), &active_class);
     return streaming_flow_graph_builder.EvaluateMetadata(
-        metadata_field.kernel_offset(), owner_class);
+        metadata_field.kernel_offset());
   } else {
     Thread* thread = Thread::Current();
     Error& error = Error::Handle();
@@ -2865,7 +2860,7 @@ RawObject* BuildParameterDescriptor(const Function& function) {
     StreamingFlowGraphBuilder streaming_flow_graph_builder(
         &helper, Script::Handle(Z, function.script()), Z,
         TypedData::Handle(Z, function.KernelData()),
-        function.KernelDataProgramOffset());
+        function.KernelDataProgramOffset(), /* active_class = */ NULL);
     return streaming_flow_graph_builder.BuildParameterDescriptor(
         function.kernel_offset());
   } else {
@@ -2928,7 +2923,8 @@ static void ProcessTokenPositionsEntry(
   }
 
   StreamingFlowGraphBuilder streaming_flow_graph_builder(
-      helper, script, zone_, kernel_data, data_kernel_offset);
+      helper, script, zone_, kernel_data, data_kernel_offset,
+      /* active_class = */ NULL);
   streaming_flow_graph_builder.CollectTokenPositionsFor(
       script.kernel_script_index(), entry_script.kernel_script_index(),
       kernel_offset, token_positions, yield_positions);
