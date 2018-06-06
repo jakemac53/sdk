@@ -96,6 +96,7 @@ final summaryArgsParser = new ArgParser()
       help: 'Whether to only build summary files.')
   ..addOption('dart-sdk-summary')
   ..addMultiOption('input-summary')
+  ..addMultiOption('input-linked')
   ..addMultiOption('multi-root')
   ..addOption('multi-root-scheme', defaultsTo: 'org-dartlang-multi-root')
   ..addOption('packages-file')
@@ -146,6 +147,7 @@ Future<bool> computeKernel(List<String> args,
       Uri.base.resolve(parsedArgs['dart-sdk-summary']),
       Uri.base.resolve(parsedArgs['packages-file']),
       parsedArgs['input-summary'].map(Uri.base.resolve).toList(),
+      parsedArgs['input-linked'].map(Uri.base.resolve).toList(),
       target,
       fileSystem);
 

@@ -26,7 +26,8 @@ Future<InitializedCompilerState> initializeCompiler(
     InitializedCompilerState oldState,
     Uri sdkSummary,
     Uri packagesFile,
-    List<Uri> inputSummaries,
+    List<Uri> summaryInputs,
+    List<Uri> linkedInputs,
     Target target,
     FileSystem fileSystem) async {
   // TODO(sigmund): use incremental compiler when it supports our use case.
@@ -37,7 +38,8 @@ Future<InitializedCompilerState> initializeCompiler(
   CompilerOptions options = new CompilerOptions()
     ..sdkSummary = sdkSummary
     ..packagesFileUri = packagesFile
-    ..inputSummaries = inputSummaries
+    ..inputSummaries = summaryInputs
+    ..linkedDependencies = linkedInputs
     ..target = target
     ..fileSystem = fileSystem
     ..chaseDependencies = true;
