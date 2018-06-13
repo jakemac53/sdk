@@ -145,6 +145,13 @@ class CompilerTestContext extends CompilerContext {
 
       T result;
       Completer<T> completer = new Completer<T>();
+      // Since we're using `package:test_reflective_loader`, we can't rely on
+      // normal async behavior, as `defineReflectiveSuite` doesn't return a
+      // future. However, since it's built on top of `package:test`, we can
+      // obtain a future that completes when all the tests are done using
+      // `tearDownAll`. This allows this function to complete no earlier than
+      // when the tests are done. This is important, as we don't want to call
+      // `CompilerContext.clear` before then.
       tearDownAll(() => completer.complete(result));
       result = await action(c);
       return completer.future;
@@ -167,11 +174,18 @@ class FastaBodyBuilderTestCase extends Object
   /// finished parsing, or `null` (the default) if EOF is expected.
   int expectedEndOffset;
 
+  @override
+  void set enableGenericMethodComments(_) {
+    // Ignored.
+  }
+
   FastaBodyBuilderTestCase(this.resolveTypes);
 
   analyzer.Parser get parser => new ParserProxy(this);
 
   TypeProvider get typeProvider => CompilerTestContext.current._typeProvider;
+
+  bool get usingFastaParser => true;
 
   @override
   void assertNoErrors() {
@@ -186,6 +200,11 @@ class FastaBodyBuilderTestCase extends Object
   @override
   void expectNotNullIfNoErrors(Object result) {
     // TODO(brianwilkerson) Implement this.
+  }
+
+  @override
+  ExpectedError expectedError(ErrorCode code, int offset, int length) {
+    return new ExpectedError(code, offset, length);
   }
 
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -8,9 +8,12 @@ import 'package:kernel/ast.dart' hide MapEntry;
 import 'package:kernel/class_hierarchy.dart' show ClassHierarchy;
 import 'package:kernel/clone.dart';
 import 'package:kernel/core_types.dart' show CoreTypes;
+import 'package:kernel/external_name.dart' show getExternalName;
 import 'package:kernel/library_index.dart' show LibraryIndex;
 import 'package:kernel/transformations/constants.dart'
     show ConstantEvaluator, ConstantsBackend, EvaluationEnvironment;
+import 'package:kernel/type_algebra.dart'
+    show Substitution, containsTypeVariable;
 import 'package:kernel/type_environment.dart' show TypeEnvironment;
 import 'package:kernel/vm/constants_native_effects.dart'
     show VmConstantsBackend;
@@ -57,6 +60,9 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
 
   Class enclosingClass;
   Member enclosingMember;
+  Set<TypeParameter> classTypeParameters;
+  Set<TypeParameter> functionTypeParameters;
+  List<DartType> instantiatorTypeArguments;
   LocalVariables locals;
   ConstantEvaluator constantEvaluator;
   Map<LabeledStatement, Label> labeledStatements;
@@ -98,7 +104,7 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
 
   @override
   defaultMember(Member node) {
-    if (node.isAbstract || node.isExternal) {
+    if (node.isAbstract) {
       return;
     }
     try {
@@ -119,9 +125,17 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
         if (node is Constructor) {
           _genConstructorInitializers(node);
         }
-        node.function?.body?.accept(this);
-        // TODO(alexmarkov): figure out when 'return null' should be generated.
-        _genPushNull();
+        if (node.isExternal) {
+          final String nativeName = getExternalName(node);
+          if (nativeName == null) {
+            return;
+          }
+          _genNativeCall(nativeName);
+        } else {
+          node.function?.body?.accept(this);
+          // TODO(alexmarkov): figure out when 'return null' should be generated.
+          _genPushNull();
+        }
         _genReturnTOS();
         end(node);
       }
@@ -130,6 +144,27 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
         print('Unable to generate bytecode for $node: $e');
       }
     }
+  }
+
+  void _genNativeCall(String nativeName) {
+    final function = enclosingMember.function;
+    assert(function != null);
+
+    if (locals.hasTypeArgsVar) {
+      asm.emitPush(locals.typeArgsVarIndexInFrame);
+    }
+    if (locals.hasReceiver) {
+      asm.emitPush(locals.getVarIndexInFrame(locals.receiverVar));
+    }
+    for (var param in function.positionalParameters) {
+      asm.emitPush(locals.getVarIndexInFrame(param));
+    }
+    for (var param in function.namedParameters) {
+      asm.emitPush(locals.getVarIndexInFrame(param));
+    }
+
+    final nativeEntryCpIndex = cp.add(new ConstantNativeEntry(nativeName));
+    asm.emitNativeCall(nativeEntryCpIndex);
   }
 
   LibraryIndex _libraryIndex;
@@ -259,15 +294,17 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
   }
 
   void _genStaticCallWithArgs(Member target, Arguments args,
-      {bool hasReceiver: false, bool alwaysPassTypeArgs: false}) {
-    final ConstantArgDesc argDesc =
-        new ConstantArgDesc.fromArguments(args, hasReceiver: hasReceiver);
+      {bool hasReceiver: false, bool isFactory: false}) {
+    final ConstantArgDesc argDesc = new ConstantArgDesc.fromArguments(args,
+        hasReceiver: hasReceiver, isFactory: isFactory);
 
     int totalArgCount = args.positional.length + args.named.length;
     if (hasReceiver) {
       totalArgCount++;
     }
-    if (args.types.isNotEmpty || alwaysPassTypeArgs) {
+    if (args.types.isNotEmpty || isFactory) {
+      // VM needs type arguments for every invocation of a factory constructor.
+      // TODO(alexmarkov): Clean this up.
       totalArgCount++;
     }
 
@@ -285,31 +322,45 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
   }
 
   void _genTypeArguments(List<DartType> typeArgs, {Class instantiatingClass}) {
-    int typeArgsCPIndex = cp.add(new ConstantTypeArguments(typeArgs));
-    if (instantiatingClass != null) {
-      typeArgsCPIndex = cp.add(new ConstantTypeArgumentsForInstanceAllocation(
-          instantiatingClass, typeArgsCPIndex));
+    int typeArgsCPIndex() {
+      int cpIndex = cp.add(new ConstantTypeArguments(typeArgs));
+      if (instantiatingClass != null) {
+        cpIndex = cp.add(new ConstantTypeArgumentsForInstanceAllocation(
+            instantiatingClass, cpIndex));
+      }
+      return cpIndex;
     }
+
     if (typeArgs.isEmpty || !hasTypeParameters(typeArgs)) {
-      asm.emitPushConstant(typeArgsCPIndex);
+      asm.emitPushConstant(typeArgsCPIndex());
     } else {
-      // TODO(alexmarkov): try to reuse instantiator type arguments
-      _genPushInstantiatorAndFunctionTypeArguments(typeArgs);
-      asm.emitInstantiateTypeArgumentsTOS(1, typeArgsCPIndex);
+      if (_canReuseInstantiatorTypeArguments(typeArgs, instantiatingClass)) {
+        _genPushInstantiatorTypeArguments();
+      } else {
+        _genPushInstantiatorAndFunctionTypeArguments(typeArgs);
+        asm.emitInstantiateTypeArgumentsTOS(1, typeArgsCPIndex());
+      }
     }
   }
 
   void _genPushInstantiatorAndFunctionTypeArguments(List<DartType> types) {
-    // TODO(alexmarkov): do not load instantiator type arguments / function type
-    // arguments if they are not needed for these particular [types].
-    _genPushInstantiatorTypeArguments();
-    _genPushFunctionTypeArguments();
+    if (classTypeParameters != null &&
+        types.any((t) => containsTypeVariable(t, classTypeParameters))) {
+      assert(instantiatorTypeArguments != null);
+      _genPushInstantiatorTypeArguments();
+    } else {
+      _genPushNull();
+    }
+    if (functionTypeParameters != null &&
+        types.any((t) => containsTypeVariable(t, functionTypeParameters))) {
+      _genPushFunctionTypeArguments();
+    } else {
+      _genPushNull();
+    }
   }
 
   void _genPushInstantiatorTypeArguments() {
-    // TODO(alexmarkov): access to type arguments in factory constructors.
-    if ((enclosingMember.isInstanceMember || enclosingMember is Constructor) &&
-        hasInstantiatorTypeArguments(enclosingClass)) {
+    if (instantiatorTypeArguments != null) {
       _genPushReceiver();
       final int cpIndex =
           cp.add(new ConstantTypeArgumentsFieldOffset(enclosingClass));
@@ -317,6 +368,48 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
     } else {
       _genPushNull();
     }
+  }
+
+  List<DartType> _flattenInstantiatorTypeArguments(
+      Class instantiatedClass, List<DartType> typeArgs) {
+    assert(typeArgs.length == instantiatedClass.typeParameters.length);
+
+    List<DartType> flatTypeArgs;
+    final supertype = instantiatedClass.supertype;
+    if (supertype == null) {
+      flatTypeArgs = <DartType>[];
+    } else {
+      final substitution =
+          Substitution.fromPairs(instantiatedClass.typeParameters, typeArgs);
+      flatTypeArgs = _flattenInstantiatorTypeArguments(supertype.classNode,
+          substitution.substituteSupertype(supertype).typeArguments);
+    }
+    flatTypeArgs.addAll(typeArgs);
+    return flatTypeArgs;
+  }
+
+  bool _canReuseInstantiatorTypeArguments(
+      List<DartType> typeArgs, Class instantiatingClass) {
+    if (instantiatorTypeArguments == null) {
+      return false;
+    }
+
+    if (instantiatingClass != null) {
+      typeArgs =
+          _flattenInstantiatorTypeArguments(instantiatingClass, typeArgs);
+    }
+
+    if (typeArgs.length > instantiatorTypeArguments.length) {
+      return false;
+    }
+
+    for (int i = 0; i < typeArgs.length; ++i) {
+      if (typeArgs[i] != instantiatorTypeArguments[i]) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   void _genPushFunctionTypeArguments() {
@@ -440,6 +533,24 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
   void start(Member node) {
     enclosingClass = node.enclosingClass;
     enclosingMember = node;
+    if (enclosingMember.isInstanceMember || enclosingMember is Constructor) {
+      if (enclosingClass.typeParameters.isNotEmpty) {
+        classTypeParameters =
+            new Set<TypeParameter>.from(enclosingClass.typeParameters);
+      }
+      if (hasInstantiatorTypeArguments(enclosingClass)) {
+        final typeParameters = enclosingClass.typeParameters
+            .map((p) => new TypeParameterType(p))
+            .toList();
+        instantiatorTypeArguments =
+            _flattenInstantiatorTypeArguments(enclosingClass, typeParameters);
+      }
+    }
+    if (enclosingMember.function != null &&
+        enclosingMember.function.typeParameters.isNotEmpty) {
+      functionTypeParameters =
+          new Set<TypeParameter>.from(enclosingMember.function.typeParameters);
+    }
     locals = new LocalVariables(node);
     // TODO(alexmarkov): improve caching in ConstantEvaluator and reuse it
     constantEvaluator = new ConstantEvaluator(constantsBackend, typeEnvironment,
@@ -496,6 +607,9 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
 
     enclosingClass = null;
     enclosingMember = null;
+    classTypeParameters = null;
+    functionTypeParameters = null;
+    instantiatorTypeArguments = null;
     locals = null;
     constantEvaluator = null;
     labeledStatements = null;
@@ -610,6 +724,12 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
     _pushAssemblerState();
 
     locals.enterScope(node);
+
+    if (function.typeParameters.isNotEmpty) {
+      functionTypeParameters ??= new Set<TypeParameter>();
+      functionTypeParameters.addAll(function.typeParameters);
+    }
+
     List<Label> savedYieldPoints = yieldPoints;
     yieldPoints = locals.isSyncYieldingFrame ? <Label>[] : null;
 
@@ -643,6 +763,10 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
     }
 
     cp.add(new ConstantEndClosureFunctionScope());
+
+    if (function.typeParameters.isNotEmpty) {
+      functionTypeParameters.removeAll(function.typeParameters);
+    }
 
     locals.leaveScope();
 
@@ -1217,16 +1341,13 @@ class BytecodeGenerator extends RecursiveVisitor<Null> {
   @override
   visitStaticInvocation(StaticInvocation node) {
     final args = node.arguments;
-    bool alwaysPassTypeArgs = false;
     if (node.target.isFactory && args.types.isEmpty) {
       // VM needs type arguments for every invocation of a factory constructor.
-      // TODO(alexmarkov): Why? Clean this up.
+      // TODO(alexmarkov): Clean this up.
       _genPushNull();
-      alwaysPassTypeArgs = true;
     }
     _genArguments(null, args);
-    _genStaticCallWithArgs(node.target, args,
-        alwaysPassTypeArgs: alwaysPassTypeArgs);
+    _genStaticCallWithArgs(node.target, args, isFactory: node.target.isFactory);
   }
 
   @override

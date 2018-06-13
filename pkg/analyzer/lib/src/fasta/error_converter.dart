@@ -349,6 +349,10 @@ class FastaErrorReporter {
         errorReporter?.reportErrorForOffset(
             StrongModeCode.INVALID_CAST_NEW_EXPR, offset, length);
         return;
+      case "INVALID_CONSTRUCTOR_NAME":
+        errorReporter?.reportErrorForOffset(
+            CompileTimeErrorCode.INVALID_CONSTRUCTOR_NAME, offset, length);
+        return;
       case "INVALID_GENERIC_FUNCTION_TYPE":
         errorReporter?.reportErrorForOffset(
             ParserErrorCode.INVALID_GENERIC_FUNCTION_TYPE, offset, length);
@@ -505,7 +509,14 @@ class FastaErrorReporter {
         return;
       case "RETURN_IN_GENERATOR":
         errorReporter?.reportErrorForOffset(
-            CompileTimeErrorCode.RETURN_IN_GENERATOR, offset, length);
+            CompileTimeErrorCode.RETURN_IN_GENERATOR, offset, length,
+            // TODO(danrubel): Update the parser to report the modifier
+            // involved in this error... either async* or sync*
+            ['async*']);
+        return;
+      case "STACK_OVERFLOW":
+        errorReporter?.reportErrorForOffset(
+            ParserErrorCode.STACK_OVERFLOW, offset, length);
         return;
       case "STATIC_AFTER_CONST":
         errorReporter?.reportErrorForOffset(

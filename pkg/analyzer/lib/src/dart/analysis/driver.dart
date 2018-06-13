@@ -95,7 +95,7 @@ class AnalysisDriver implements AnalysisDriverGeneric {
   /**
    * The version of data format, should be incremented on every format change.
    */
-  static const int DATA_VERSION = 60;
+  static const int DATA_VERSION = 61;
 
   /**
    * The number of exception contexts allowed to write. Once this field is
@@ -643,6 +643,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
    * interactive analysis, such as Analysis Server or its plugins.
    */
   Future<ErrorsResult> getErrors(String path) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     _throwIfNotAbsolutePath(path);
 
     // Ask the analysis result without unit, so return cached errors.
@@ -726,6 +728,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
    * store, or built for a file to which the given [uri] is resolved.
    */
   Future<LibraryElement> getLibraryByUri(String uri) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     if (_externalSummaries != null && _externalSummaries.hasUnlinkedUnit(uri)) {
       return LibraryContext.resynthesizeLibraryElement(analysisOptions,
           declaredVariables, sourceFactory, _externalSummaries, uri);
@@ -741,23 +745,6 @@ class AnalysisDriver implements AnalysisDriverGeneric {
     var file = fsState.getFileForPath(path);
     signature.addString(file.contentHash);
     return signature;
-  }
-
-  /**
-   * Return the cached [AnalysisDriverResolvedUnit] for the file with the given
-   * [file], or `null` if the cache does not contain this information.
-   */
-  AnalysisDriverResolvedUnit getResolvedUnitObject(FileState file) {
-    FileState library = file.isPart ? file.library : file;
-    if (library != null) {
-      String signature = _getResolvedUnitSignature(library, file);
-      String key = _getResolvedUnitKey(signature);
-      List<int> bytes = _byteStore.get(key);
-      if (bytes != null) {
-        return new AnalysisDriverResolvedUnit.fromBuffer(bytes);
-      }
-    }
-    return null;
   }
 
   /**
@@ -814,6 +801,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
    * The [path] must be absolute and normalized.
    */
   Future<SourceKind> getSourceKind(String path) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     _throwIfNotAbsolutePath(path);
     if (AnalysisEngine.isDartFileName(path)) {
       FileState file = _fsState.getFileForPath(path);
@@ -896,6 +885,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
    * resolved unit).
    */
   Future<ParseResult> parseFile(String path) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     return parseFileSync(path);
   }
 
@@ -921,6 +912,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
 
   @override
   Future<Null> performWork() async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     if (_fileTracker.verifyChangedFilesIfNeeded()) {
       return;
     }
@@ -1207,6 +1200,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
       {bool withUnit: false,
       bool asIsIfPartWithoutLibrary: false,
       bool skipIfSameSignature: false}) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     FileState file = _fsState.getFileForPath(path);
 
     // Prepare the library - the file itself, or the known library.
@@ -1243,6 +1238,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
 
     // We need the fully resolved unit, or the result is not cached.
     return _logger.runAsync('Compute analysis result for $path', () async {
+      // TODO(brianwilkerson) Determine whether this await is necessary.
+      await null;
       try {
         LibraryContext libraryContext;
         KernelContext kernelContext;
@@ -1329,6 +1326,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
   }
 
   Future<AnalysisDriverUnitIndex> _computeIndex(String path) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     AnalysisResult analysisResult = await _computeAnalysisResult(path,
         withUnit: false, asIsIfPartWithoutLibrary: true);
     return analysisResult._index;
@@ -1336,6 +1335,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
 
   Future<UnitElementResult> _computeUnitElement(String path,
       {bool asIsIfPartWithoutLibrary: false}) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     FileState file = _fsState.getFileForPath(path);
 
     // Prepare the library - the file itself, or the known library.
@@ -1406,6 +1407,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
   }
 
   Future<KernelContext> _createKernelContext(FileState library) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     return await KernelContext.forSingleLibrary(
         library,
         _logger,
@@ -1439,6 +1442,8 @@ class AnalysisDriver implements AnalysisDriverGeneric {
    * Return the context in which the [library] should be analyzed.
    */
   Future<LibraryContext> _createLibraryContext(FileState library) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     _testView.numOfCreatedLibraryContexts++;
     return new LibraryContext.forSingleLibrary(
         library,
@@ -2040,6 +2045,8 @@ class AnalysisDriverTestView {
 
   Future<SummaryDataStore> getSummaryStore(String libraryPath) async {
     FileState library = driver.fsState.getFileForPath(libraryPath);
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     LibraryContext libraryContext = await driver._createLibraryContext(library);
     try {
       return libraryContext.store;

@@ -6,7 +6,26 @@ library fasta.kernel_library_builder;
 
 import 'dart:convert' show jsonEncode;
 
-import 'package:kernel/ast.dart';
+import 'package:kernel/ast.dart'
+    show
+        Arguments,
+        Class,
+        ConstructorInvocation,
+        DartType,
+        Expression,
+        Field,
+        Library,
+        LibraryDependency,
+        LibraryPart,
+        Member,
+        Name,
+        Procedure,
+        ProcedureKind,
+        StaticInvocation,
+        StringLiteral,
+        TreeNode,
+        Typedef,
+        VoidType;
 
 import '../../scanner/token.dart' show Token;
 
@@ -576,7 +595,7 @@ class KernelLibraryBuilder
       String documentationComment,
       List<MetadataBuilder> metadata,
       int modifiers,
-      ConstructorReferenceBuilder constructorNameReference,
+      Object name,
       List<FormalParameterBuilder> formals,
       ConstructorReferenceBuilder redirectionTarget,
       int charOffset,
@@ -588,19 +607,17 @@ class KernelLibraryBuilder
     // Nested declaration began in `OutlineBuilder.beginFactoryMethod`.
     DeclarationBuilder<KernelTypeBuilder> factoryDeclaration =
         endNestedDeclaration("#factory_method");
-    Object name = constructorNameReference.name;
 
     // Prepare the simple procedure name.
     String procedureName;
     String constructorName =
-        computeAndValidateConstructorName(name, charOffset);
+        computeAndValidateConstructorName(name, charOffset, isFactory: true);
     if (constructorName != null) {
       procedureName = constructorName;
     } else {
       procedureName = name;
     }
 
-    assert(constructorNameReference.suffix == null);
     KernelProcedureBuilder procedure;
     if (redirectionTarget != null) {
       procedure = new KernelRedirectingFactoryBuilder(

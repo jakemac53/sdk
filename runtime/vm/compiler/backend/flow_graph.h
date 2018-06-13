@@ -130,17 +130,20 @@ class FlowGraph : public ZoneAllocated {
   }
 
   intptr_t CurrentContextEnvIndex() const {
-    return parsed_function().current_context_var()->BitIndexIn(
-        num_direct_parameters_);
+    return EnvIndex(parsed_function().current_context_var());
   }
 
   intptr_t RawTypeArgumentEnvIndex() const {
-    return parsed_function().RawTypeArgumentsVariable()->BitIndexIn(
-        num_direct_parameters_);
+    return EnvIndex(parsed_function().RawTypeArgumentsVariable());
   }
 
   intptr_t ArgumentDescriptorEnvIndex() const {
-    return parsed_function().arg_desc_var()->BitIndexIn(num_direct_parameters_);
+    return EnvIndex(parsed_function().arg_desc_var());
+  }
+
+  intptr_t EnvIndex(const LocalVariable* variable) const {
+    ASSERT(!variable->is_captured());
+    return num_direct_parameters_ - variable->index().value();
   }
 
   // Flow graph orders.
@@ -347,6 +350,37 @@ class FlowGraph : public ZoneAllocated {
   void RenameUsesDominatedByRedefinitions();
 
   bool should_print() const { return should_print_; }
+
+  //
+  // High-level utilities.
+  //
+
+  // Logical-AND (for use in short-circuit diamond).
+  struct LogicalAnd {
+    LogicalAnd(ComparisonInstr* x, ComparisonInstr* y) : oper1(x), oper2(y) {}
+    ComparisonInstr* oper1;
+    ComparisonInstr* oper2;
+  };
+
+  // Constructs a diamond control flow at the instruction, inheriting
+  // properties from inherit and using the given compare. Returns the
+  // join (and true/false blocks in out parameters). Updates dominance
+  // relation, but not the succ/pred ordering on block.
+  JoinEntryInstr* NewDiamond(Instruction* instruction,
+                             Instruction* inherit,
+                             ComparisonInstr* compare,
+                             TargetEntryInstr** block_true,
+                             TargetEntryInstr** block_false);
+
+  // As above, but with a short-circuit on two comparisons.
+  JoinEntryInstr* NewDiamond(Instruction* instruction,
+                             Instruction* inherit,
+                             const LogicalAnd& condition,
+                             TargetEntryInstr** block_true,
+                             TargetEntryInstr** block_false);
+
+  // Adds a 2-way phi.
+  PhiInstr* AddPhi(JoinEntryInstr* join, Definition* d1, Definition* d2);
 
  private:
   friend class IfConverter;

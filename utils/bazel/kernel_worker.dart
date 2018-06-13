@@ -157,9 +157,7 @@ Future<bool> computeKernel(List<String> args,
     for (fe.FormattedMessage message in context) {
       out.writeln(message.formatted);
     }
-    if (severity != fe.Severity.nit) {
-      succeeded = false;
-    }
+    succeeded = false;
   }
 
   var kernel =

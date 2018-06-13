@@ -154,13 +154,20 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
     _userDefinedPlugins = plugins ?? <Plugin>[];
   }
 
-  String posixPathToPlatformPath(String filePath) {
-    var components = path.posix.split(filePath);
-    return resourceProvider.pathContext.joinAll(components);
+  /**
+   * Converts the given [filePath] into absolute and normalized.
+   */
+  String normalizePath(String filePath) {
+    filePath = filePath.trim();
+    filePath = resourceProvider.pathContext.absolute(filePath);
+    filePath = resourceProvider.pathContext.normalize(filePath);
+    return filePath;
   }
 
   @override
   Future<Null> start(List<String> args) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     if (analysisDriver != null) {
       throw new StateError("start() can only be called once");
     }
@@ -192,6 +199,8 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
     } else if (options.batchMode) {
       BatchRunner batchRunner = new BatchRunner(outSink, errorSink);
       batchRunner.runAsBatch(args, (List<String> args) async {
+        // TODO(brianwilkerson) Determine whether this await is necessary.
+        await null;
         CommandLineOptions options = CommandLineOptions.parse(args);
         return await _analyzeAll(options);
       });
@@ -225,6 +234,8 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
   }
 
   Future<ErrorSeverity> _analyzeAll(CommandLineOptions options) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     PerformanceTag previous = _analyzeAllTag.makeCurrent();
     try {
       return await _analyzeAllImpl(options);
@@ -240,6 +251,8 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
 
   /// Perform analysis according to the given [options].
   Future<ErrorSeverity> _analyzeAllImpl(CommandLineOptions options) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     if (!options.machineFormat) {
       List<String> fileNames = options.sourceFiles.map((String file) {
         file = path.normalize(file);
@@ -290,11 +303,7 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
     }
 
     for (String sourcePath in options.sourceFiles) {
-      sourcePath = sourcePath.trim();
-
-      // Input paths could be given in the Posix format.
-      // Make sure that we continue using them in the platform format.
-      sourcePath = posixPathToPlatformPath(sourcePath);
+      sourcePath = normalizePath(sourcePath);
 
       // Create a context, or re-use the previous one.
       try {
@@ -399,6 +408,8 @@ class Driver extends Object with HasContextMixin implements CommandLineStarter {
 
   /// Perform analysis in build mode according to the given [options].
   Future<ErrorSeverity> _buildModeAnalyze(CommandLineOptions options) async {
+    // TODO(brianwilkerson) Determine whether this await is necessary.
+    await null;
     PerformanceTag previous = _analyzeAllTag.makeCurrent();
     try {
       if (options.buildModePersistentWorker) {

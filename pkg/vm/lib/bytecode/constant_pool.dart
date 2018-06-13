@@ -153,6 +153,11 @@ type ConstantEndClosureFunctionScope extends ConstantPoolEntry {
   Byte tag = 22;
 }
 
+type ConstantNativeEntry extends ConstantPoolEntry {
+  Byte tag = 23;
+  StringReference nativeName;
+}
+
 */
 
 enum ConstantTag {
@@ -179,6 +184,7 @@ enum ConstantTag {
   kContextOffset,
   kClosureFunction,
   kEndClosureFunctionScope,
+  kNativeEntry,
 }
 
 abstract class ConstantPoolEntry {
@@ -243,6 +249,8 @@ abstract class ConstantPoolEntry {
         return new ConstantClosureFunction.readFromBinary(source);
       case ConstantTag.kEndClosureFunctionScope:
         return new ConstantEndClosureFunctionScope.readFromBinary(source);
+      case ConstantTag.kNativeEntry:
+        return new ConstantNativeEntry.readFromBinary(source);
     }
     throw 'Unexpected constant tag $tag';
   }
@@ -405,9 +413,18 @@ class ConstantArgDesc extends ConstantPoolEntry {
   ConstantArgDesc(this.numArguments,
       {this.numTypeArgs = 0, this.argNames = const <String>[]});
 
-  ConstantArgDesc.fromArguments(Arguments args, {bool hasReceiver: false})
-      : this(args.positional.length + args.named.length + (hasReceiver ? 1 : 0),
-            numTypeArgs: args.types.length,
+  ConstantArgDesc.fromArguments(Arguments args,
+      {bool hasReceiver: false, bool isFactory: false})
+      : this(
+            args.positional.length +
+                args.named.length +
+                (hasReceiver ? 1 : 0) +
+                // VM expects that type arguments vector passed to a factory
+                // constructor is counted in numArguments, and not counted in
+                // numTypeArgs.
+                // TODO(alexmarkov): Clean this up.
+                (isFactory ? 1 : 0),
+            numTypeArgs: isFactory ? 0 : args.types.length,
             argNames: new List<String>.from(args.named.map((ne) => ne.name)));
 
   @override
@@ -995,6 +1012,33 @@ class ConstantEndClosureFunctionScope extends ConstantPoolEntry {
   // ConstantEndClosureFunctionScope entries are created per closure and should
   // not be merged, so ConstantEndClosureFunctionScope class uses identity
   // [hashCode] and [operator ==].
+}
+
+class ConstantNativeEntry extends ConstantPoolEntry {
+  final String nativeName;
+
+  ConstantNativeEntry(this.nativeName);
+
+  @override
+  ConstantTag get tag => ConstantTag.kNativeEntry;
+
+  @override
+  void writeValueToBinary(BinarySink sink) {
+    sink.writeStringReference(nativeName);
+  }
+
+  ConstantNativeEntry.readFromBinary(BinarySource source)
+      : nativeName = source.readStringReference();
+
+  @override
+  String toString() => 'NativeEntry $nativeName';
+
+  @override
+  int get hashCode => nativeName.hashCode;
+
+  @override
+  bool operator ==(other) =>
+      other is ConstantNativeEntry && this.nativeName == other.nativeName;
 }
 
 class ConstantPool {

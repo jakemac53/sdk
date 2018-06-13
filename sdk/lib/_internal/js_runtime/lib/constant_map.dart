@@ -12,7 +12,7 @@ class ConstantMapView<K, V> extends UnmodifiableMapView<K, V>
 abstract class ConstantMap<K, V> implements Map<K, V> {
   // Used to create unmodifiable maps from other maps.
   factory ConstantMap.from(Map other) {
-    List keys = other.keys.toList();
+    List keys = new List<K>.from(other.keys);
     bool allStrings = true;
     for (var k in keys) {
       if (k is! String) {
@@ -26,7 +26,7 @@ abstract class ConstantMap<K, V> implements Map<K, V> {
       var object = JS('=Object', '{}');
       int length = 0;
       for (var k in keys) {
-        var v = other[k];
+        V v = other[k];
         if (k != '__proto__') {
           if (!jsHasOwnProperty(object, k)) length++;
           JS('void', '#[#] = #', object, k, v);
@@ -48,10 +48,6 @@ abstract class ConstantMap<K, V> implements Map<K, V> {
   const ConstantMap._();
 
   Map<RK, RV> cast<RK, RV>() => Map.castFrom<K, V, RK, RV>(this);
-
-  @Deprecated("Use cast instead.")
-  Map<RK, RV> retype<RK, RV>() => cast<RK, RV>();
-
   bool get isEmpty => length == 0;
 
   bool get isNotEmpty => !isEmpty;

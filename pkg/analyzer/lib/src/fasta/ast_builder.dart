@@ -33,7 +33,6 @@ import 'package:front_end/src/fasta/problems.dart' show unhandled;
 import 'package:front_end/src/fasta/messages.dart'
     show
         Message,
-        codeExpectedFunctionBody,
         messageConstConstructorWithBody,
         messageConstMethod,
         messageConstructorWithReturnType,
@@ -154,6 +153,13 @@ class AstBuilder extends StackListener {
     ConstructorName constructorName = pop();
     push(ast.instanceCreationExpression(
         token, constructorName, arguments.argumentList));
+  }
+
+  @override
+  void endImplicitCreationExpression(Token token) {
+    debugEvent("ImplicitCreationExpression");
+
+    _handleInstanceCreation(null);
   }
 
   @override
@@ -503,9 +509,8 @@ class AstBuilder extends StackListener {
     debugEvent("ExpressionFunctionBody");
 
     Expression expression = pop();
-    Token star = pop();
+    pop(); // star (*)
     Token asyncKeyword = pop();
-    assert(star == null);
     if (parseFunctionBodies) {
       push(ast.expressionFunctionBody(
           asyncKeyword, arrowToken, expression, semicolon));
@@ -1433,24 +1438,6 @@ class AstBuilder extends StackListener {
     push(ast.blockFunctionBody(asyncKeyword, star, block));
   }
 
-  @override
-  Token handleUnrecoverableError(Token token, Message message) {
-    if (message.code == codeExpectedFunctionBody) {
-      if (identical('native', token.stringValue) && parser != null) {
-        Token nativeKeyword = token;
-        Token semicolon = parser.parseLiteralString(token).next;
-        // TODO(brianwilkerson) Should this be using ensureSemicolon?
-        token = parser.expectSemicolon(semicolon);
-        StringLiteral name = pop();
-        pop(); // star
-        pop(); // async
-        push(ast.nativeFunctionBody(nativeKeyword, name, semicolon));
-        return token;
-      }
-    }
-    return super.handleUnrecoverableError(token, message);
-  }
-
   void handleUnaryPrefixExpression(Token operator) {
     assert(operator.type.isUnaryPrefixOperator);
     debugEvent("UnaryPrefixExpression");
@@ -2058,7 +2045,8 @@ class AstBuilder extends StackListener {
     }
 
     FormalParameterList parameters = pop();
-    ConstructorName constructorName = pop();
+    pop(); // Type parameters
+    Object constructorName = pop();
     _Modifiers modifiers = pop();
     List<Annotation> metadata = pop();
     Comment comment = _findComment(metadata, beginToken);
@@ -2068,7 +2056,7 @@ class AstBuilder extends StackListener {
     SimpleIdentifier returnType;
     Token period;
     SimpleIdentifier name;
-    Identifier typeName = constructorName.type.name;
+    Identifier typeName = constructorName;
     if (typeName is SimpleIdentifier) {
       returnType = typeName;
     } else if (typeName is PrefixedIdentifier) {

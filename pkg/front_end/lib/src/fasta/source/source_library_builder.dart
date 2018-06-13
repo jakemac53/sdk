@@ -39,9 +39,12 @@ import '../export.dart' show Export;
 
 import '../fasta_codes.dart'
     show
+        messageConstructorWithWrongName,
         messageExpectedUri,
         messageMemberWithSameNameAsClass,
         messagePartOfSelf,
+        messagePartOfTwoLibraries,
+        messagePartOfTwoLibrariesContext,
         noLength,
         templateConflictsWithMember,
         templateConflictsWithSetter,
@@ -49,7 +52,7 @@ import '../fasta_codes.dart'
         templateDeferredPrefixDuplicated,
         templateDeferredPrefixDuplicatedCause,
         templateDuplicatedDefinition,
-        templateIllegalMethodName,
+        templateConstructorWithWrongNameContext,
         templateMissingPartOf,
         templatePartOfLibraryNameMismatch,
         templatePartOfUriMismatch,
@@ -193,7 +196,8 @@ abstract class SourceLibraryBuilder<T extends TypeBuilder, R>
     }
   }
 
-  String computeAndValidateConstructorName(Object name, int charOffset) {
+  String computeAndValidateConstructorName(Object name, int charOffset,
+      {isFactory: false}) {
     String className = currentDeclaration.name;
     String prefix;
     String suffix;
@@ -207,15 +211,20 @@ abstract class SourceLibraryBuilder<T extends TypeBuilder, R>
     if (prefix == className) {
       return suffix ?? "";
     }
-    if (suffix == null) {
+    if (suffix == null && !isFactory) {
       // A legal name for a regular method, but not for a constructor.
       return null;
     }
-    addCompileTimeError(
-        templateIllegalMethodName.withArguments("$name", "$className.$suffix"),
-        charOffset,
-        noLength,
-        fileUri);
+
+    addProblem(
+        messageConstructorWithWrongName, charOffset, prefix.length, fileUri,
+        context: [
+          templateConstructorWithWrongNameContext
+              .withArguments(currentDeclaration.name)
+              .withLocation(uri, currentDeclaration.charOffset,
+                  currentDeclaration.name.length)
+        ]);
+
     return suffix;
   }
 
@@ -424,7 +433,7 @@ abstract class SourceLibraryBuilder<T extends TypeBuilder, R>
       String documentationComment,
       List<MetadataBuilder> metadata,
       int modifiers,
-      ConstructorReferenceBuilder name,
+      Object name,
       List<FormalParameterBuilder> formals,
       ConstructorReferenceBuilder redirectionTarget,
       int charOffset,
@@ -582,11 +591,23 @@ abstract class SourceLibraryBuilder<T extends TypeBuilder, R>
 
   void includeParts() {
     Set<Uri> seenParts = new Set<Uri>();
-    for (SourceLibraryBuilder<T, R> part in parts.toList()) {
+    for (SourceLibraryBuilder<T, R> part in parts) {
       if (part == this) {
         addCompileTimeError(messagePartOfSelf, -1, noLength, fileUri);
       } else if (seenParts.add(part.fileUri)) {
-        includePart(part);
+        if (part.partOfLibrary != null &&
+            // TODO(askesc): Remove this hack when co19 fix is rolled in.
+            !part.fileUri.path.endsWith("/co19/src/Utils/expect_common.dart")) {
+          addProblem(messagePartOfTwoLibraries, -1, noLength, part.fileUri,
+              context: [
+                messagePartOfTwoLibrariesContext.withLocation(
+                    part.partOfLibrary.fileUri, -1, noLength),
+                messagePartOfTwoLibrariesContext.withLocation(
+                    this.fileUri, -1, noLength)
+              ]);
+        } else {
+          includePart(part);
+        }
       } else {
         addCompileTimeError(templatePartTwice.withArguments(part.fileUri), -1,
             noLength, fileUri);
@@ -747,16 +768,20 @@ class DeclarationBuilder<T extends TypeBuilder> {
 
   String name;
 
+  // Offset of name token, updated by the outline builder along
+  // with the name as the current declaration changes.
+  int charOffset;
+
   List<TypeVariableBuilder> typeVariables;
 
-  DeclarationBuilder(
-      this.members, this.setters, this.constructors, this.name, this.parent) {
+  DeclarationBuilder(this.members, this.setters, this.constructors, this.name,
+      this.charOffset, this.parent) {
     assert(name != null);
   }
 
   DeclarationBuilder.library()
       : this(<String, Declaration>{}, <String, Declaration>{}, null, "library",
-            null);
+            -1, null);
 
   DeclarationBuilder createNested(String name, bool hasMembers) {
     return new DeclarationBuilder<T>(
@@ -764,6 +789,7 @@ class DeclarationBuilder<T extends TypeBuilder> {
         hasMembers ? <String, MemberBuilder>{} : null,
         hasMembers ? <String, MemberBuilder>{} : null,
         name,
+        -1,
         this);
   }
 

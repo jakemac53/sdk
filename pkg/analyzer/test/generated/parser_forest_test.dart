@@ -8,8 +8,8 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 import '../src/fasta/body_builder_test_helper.dart';
 import 'parser_test.dart';
 
-main() async {
-  await CompilerTestContext.runWithTestOptions((_) {
+main() {
+  return CompilerTestContext.runWithTestOptions((_) {
     defineReflectiveSuite(() {
       defineReflectiveTests(ClassMemberParserTest_Forest);
       defineReflectiveTests(ComplexParserTest_Forest);
@@ -2834,11 +2834,6 @@ class ExpressionParserTest_Forest extends FastaBodyBuilderTestCase
   }
 
   @failingTest
-  void test_parseExpression_assign_compound() {
-    super.test_parseExpression_assign_compound();
-  }
-
-  @failingTest
   void test_parseExpression_comparison() {
     super.test_parseExpression_comparison();
   }
@@ -5218,11 +5213,6 @@ class StatementParserTest_Forest extends FastaBodyBuilderTestCase
   }
 
   @failingTest
-  void test_parseStatement_singleLabel() {
-    super.test_parseStatement_singleLabel();
-  }
-
-  @failingTest
   void test_parseSwitchStatement_case() {
     super.test_parseSwitchStatement_case();
   }
@@ -5973,18 +5963,8 @@ class TopLevelParserTest_Forest extends FastaBodyBuilderTestCase
   }
 
   @failingTest
-  void test_parseFunctionDeclaration_functionWithTypeParameters_comment() {
-    super.test_parseFunctionDeclaration_functionWithTypeParameters_comment();
-  }
-
-  @failingTest
   void test_parseFunctionDeclaration_getter() {
     super.test_parseFunctionDeclaration_getter();
-  }
-
-  @failingTest
-  void test_parseFunctionDeclaration_getter_generic_comment_returnType() {
-    super.test_parseFunctionDeclaration_getter_generic_comment_returnType();
   }
 
   @failingTest

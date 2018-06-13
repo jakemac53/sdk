@@ -77,7 +77,9 @@ void CompilerDeoptInfo::AllocateIncomingParametersRecursive(
   for (Environment::ShallowIterator it(env); !it.Done(); it.Advance()) {
     if (it.CurrentLocation().IsInvalid() &&
         it.CurrentValue()->definition()->IsPushArgument()) {
-      it.SetCurrentLocation(Location::StackSlot((*stack_height)++));
+      it.SetCurrentLocation(
+          Location::StackSlot(FrameSlotForVariableIndex(-*stack_height)));
+      (*stack_height)++;
     }
   }
 }
@@ -361,16 +363,17 @@ void FlowGraphCompiler::EmitCatchEntryState(Environment* env,
         catch_entry_state_maps_builder_->AppendConstant(id, dest_index);
         continue;
       }
-      if (src.stack_index() != dest_index) {
-        catch_entry_state_maps_builder_->AppendMove(src.stack_index(),
-                                                    dest_index);
+      const intptr_t src_index = -VariableIndexForFrameSlot(src.stack_index());
+      if (src_index != dest_index) {
+        catch_entry_state_maps_builder_->AppendMove(src_index, dest_index);
       }
     }
 
     // Process locals. Skip exception_var and stacktrace_var.
-    intptr_t local_base = kFirstLocalSlotFromFp + num_direct_parameters;
-    intptr_t ex_idx = local_base - catch_block->exception_var().index();
-    intptr_t st_idx = local_base - catch_block->stacktrace_var().index();
+    intptr_t local_base = num_direct_parameters;
+    intptr_t ex_idx = local_base - catch_block->exception_var().index().value();
+    intptr_t st_idx =
+        local_base - catch_block->stacktrace_var().index().value();
     for (; i < flow_graph().variable_count(); ++i) {
       // Don't sync captured parameters. They are not in the environment.
       if (flow_graph().captured_parameters()->Contains(i)) continue;
@@ -390,9 +393,9 @@ void FlowGraphCompiler::EmitCatchEntryState(Environment* env,
         catch_entry_state_maps_builder_->AppendConstant(id, dest_index);
         continue;
       }
-      if (src.stack_index() != dest_index) {
-        catch_entry_state_maps_builder_->AppendMove(src.stack_index(),
-                                                    dest_index);
+      const intptr_t src_index = -VariableIndexForFrameSlot(src.stack_index());
+      if (src_index != dest_index) {
+        catch_entry_state_maps_builder_->AppendMove(src_index, dest_index);
       }
     }
     catch_entry_state_maps_builder_->EndMapping();
@@ -628,8 +631,8 @@ void FlowGraphCompiler::AddDescriptor(RawPcDescriptors::Kind kind,
                                       TokenPosition token_pos,
                                       intptr_t try_index) {
   code_source_map_builder_->NoteDescriptor(kind, pc_offset, token_pos);
-  // When running with optimizations disabled, don't emit deopt-descriptors.
-  if (!CanOptimize() && (kind == RawPcDescriptors::kDeopt)) return;
+  // Don't emit deopt-descriptors in AOT mode.
+  if (FLAG_precompiled_mode && (kind == RawPcDescriptors::kDeopt)) return;
   pc_descriptors_list_->AddDescriptor(kind, pc_offset, deopt_id, token_pos,
                                       try_index);
 }
@@ -940,7 +943,8 @@ void FlowGraphCompiler::FinalizeVarDescriptors(const Code& code) {
     info.scope_id = 0;
     info.begin_pos = TokenPosition::kMinSource;
     info.end_pos = TokenPosition::kMinSource;
-    info.set_index(parsed_function().current_context_var()->index());
+    info.set_index(
+        FrameSlotForVariable(parsed_function().current_context_var()));
     var_descs.SetVar(0, Symbols::CurrentContextVar(), &info);
   }
   code.set_var_descriptors(var_descs);

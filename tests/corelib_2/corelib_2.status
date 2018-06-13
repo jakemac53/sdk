@@ -20,7 +20,6 @@ iterable_element_at_test/static: Pass
 num_sign_test: Crash, Pass # Issue 31768
 
 [ $compiler == dart2js ]
-apply_generic_function_test: RuntimeError # Issue 32691
 bigint_from_test: RuntimeError # Issue 32589
 date_time11_test: RuntimeError, Pass # Fails when US is on winter time, issue 31285.
 iterable_where_type_test: RuntimeError # issue 31718
@@ -37,6 +36,7 @@ int_modulo_arith_test/none: RuntimeError
 string_from_environment3_test/03: Crash
 
 [ $compiler == precompiler ]
+bigint_test: Pass, Timeout # --no_intrinsify
 int_parse_radix_test: Pass, Timeout # --no_intrinsify
 integer_parsed_mul_div_vm_test: Pass, Timeout # --no_intrinsify
 regexp/stack-overflow_test: RuntimeError, OK # Smaller limit with irregex interpreter
@@ -213,6 +213,7 @@ symbol_reserved_word_test/03: RuntimeError # Issue 19972, new Symbol('void') sho
 cast_test: RuntimeError
 error_stack_trace1_test: RuntimeError
 growable_list_test: RuntimeError
+int_parse_radix_test/02: RuntimeError
 integer_to_radix_string_test/01: RuntimeError
 integer_to_radix_string_test/02: RuntimeError
 integer_to_radix_string_test/none: RuntimeError
@@ -224,8 +225,6 @@ nan_infinity_test/01: RuntimeError
 string_split_test/checkedstore: RuntimeError
 symbol_reserved_word_test/03: RuntimeError # Issue 19972, new Symbol('void') should be allowed.
 uri_base_test: Crash # RangeError (index): Invalid value: Valid value range is empty: 0
-uri_parameters_all_test: RuntimeError
-uri_test: RuntimeError
 
 [ $compiler == dart2js && $fasta ]
 int_from_environment_int64_test: RuntimeError # WontFix: Int not precisely representable in JS
@@ -241,6 +240,7 @@ int_try_parse_int64_test: RuntimeError # WontFix: Int not precisely representabl
 cast_test: RuntimeError
 error_stack_trace1_test: RuntimeError # Issue 12399
 growable_list_test: RuntimeError # Concurrent modifications test always runs
+int_parse_radix_test/02: RuntimeError
 integer_to_radix_string_test/01: RuntimeError
 integer_to_radix_string_test/02: RuntimeError
 integer_to_radix_string_test/none: RuntimeError
@@ -254,8 +254,6 @@ regexp/pcre_test: RuntimeError
 string_split_test/checkedstore: RuntimeError # Issue 30548: does not check stores into List<String>
 symbol_reserved_word_test/03: RuntimeError # Issue 19972, new Symbol('void') should be allowed.
 uri_base_test: RuntimeError
-uri_parameters_all_test: RuntimeError
-uri_test: RuntimeError
 
 [ $compiler == dart2js && $fasta && $minified && $strong ]
 cast_test: RuntimeError
@@ -280,8 +278,6 @@ symbol_operator_test/03: RuntimeError
 symbol_operator_test/none: RuntimeError
 symbol_reserved_word_test/03: RuntimeError # Issue 19972, new Symbol('void') should be allowed.
 uri_base_test: RuntimeError
-uri_parameters_all_test: RuntimeError
-uri_test: RuntimeError
 
 [ $compiler == dart2js && $fasta && !$strong ]
 *: SkipByDesign
@@ -325,6 +321,7 @@ unicode_test: RuntimeError # Issue 18061: German double S.
 apply_test/01: RuntimeError
 
 [ $compiler == dartkp && $runtime == dart_precompiled && $strong ]
+bigint_test: Pass, Timeout # --no_intrinsify
 iterable_fold_test/02: RuntimeError
 iterable_reduce_test/01: CompileTimeError # Issue 31533
 iterable_reduce_test/none: RuntimeError
@@ -407,7 +404,7 @@ regress_r21715_test: RuntimeError # Requires fixed-size int64 support.
 typed_data_with_limited_ints_test: Skip # Requires fixed-size int64 support.
 
 [ $runtime != none && ($compiler == dartdevc || $compiler == dartdevk) ]
-bigint_test: Pass, Slow
+bigint_test: Pass, Slow, Timeout
 compare_to2_test: RuntimeError # Issue 30170
 date_time10_test: RuntimeError # Issue 29921
 error_stack_trace_test/nullThrown: RuntimeError # .stackTrace not present for exception caught from 'throw null;'
@@ -472,6 +469,7 @@ symbol_reserved_word_test/09: RuntimeError # Issue 29921
 symbol_reserved_word_test/12: RuntimeError # Issue 29921
 symbol_test/none: RuntimeError # Issue 29921
 typed_data_with_limited_ints_test: Skip # Requires fixed-size int64 support.
+uri_parse_test: Pass, Slow
 
 [ $runtime == vm && !$strong ]
 collection_of_test: RuntimeError
@@ -545,7 +543,7 @@ list_test/*: RuntimeError # VM doesn't implement strong mode covariance checks
 
 [ $arch == simarm || $arch == simarm64 || $arch == simdbc64 ]
 bigint_parse_radix_test: Pass, Slow # Bigint computations are slow on simulated architectures.
-bigint_test: Pass, Slow # Bigint computations are slow on simulated architectures.
+bigint_test: Pass, Slow, Timeout # Bigint computations are slow on simulated architectures.
 
 [ $arch == simdbc || $arch == simdbc64 ]
 regexp/stack-overflow_test: RuntimeError, OK # Smaller limit with irregex interpreter
@@ -610,5 +608,5 @@ regexp/UC16_test: RuntimeError
 
 [ $hot_reload || $hot_reload_rollback ]
 bigint_parse_radix_test: Pass, Timeout # Issue 31659
-bigint_test: Pass, Crash # Issue 31660
+bigint_test: Pass, Timeout # Issue 31659
 integer_parsed_mul_div_vm_test: Pass, Slow # Slow
