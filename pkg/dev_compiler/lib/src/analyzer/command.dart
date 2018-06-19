@@ -7,9 +7,10 @@ import 'package:analyzer/src/command_line/arguments.dart'
     show defineAnalysisArguments, ignoreUnrecognizedFlagsFlag;
 import 'package:analyzer/src/generated/source.dart' show Source;
 import 'package:analyzer/src/summary/package_bundle_reader.dart'
-    show ConflictingSummaryException, InSummarySource;
+    show ConflictingSummaryException, InSummarySource, SummaryDataStore;
 import 'package:args/args.dart' show ArgParser, ArgResults;
 import 'package:args/command_runner.dart' show UsageException;
+import 'package:bazel_worker/bazel_worker.dart';
 import 'package:path/path.dart' as path;
 
 import '../compiler/module_builder.dart';
@@ -25,7 +26,7 @@ bool _verbose = false;
 /// This handles argument parsing, usage, error handling.
 /// See bin/dartdevc.dart for the actual entry point, which includes Bazel
 /// worker support.
-int compile(List<String> args, {void printFn(Object obj)}) {
+int compile(List<String> args, {void printFn(Object obj), SummaryDataStore summaryData}) {
   printFn ??= print;
 
   ArgResults argResults;
@@ -54,7 +55,7 @@ int compile(List<String> args, {void printFn(Object obj)}) {
   }
 
   try {
-    _compile(argResults, analyzerOptions, printFn);
+    _compile(argResults, analyzerOptions, printFn, summaryData: summaryData);
     return 0;
   } on UsageException catch (error) {
     // Incorrect usage, input file not found, etc.
@@ -127,8 +128,8 @@ bool _changed(List<int> list1, List<int> list2) {
 }
 
 void _compile(ArgResults argResults, AnalyzerOptions analyzerOptions,
-    void printFn(Object obj)) {
-  var compiler = ModuleCompiler(analyzerOptions);
+    void printFn(Object obj), {SummaryDataStore summaryData}) {
+  var compiler = ModuleCompiler(analyzerOptions, summaryData: summaryData);
   var compilerOpts = CompilerOptions.fromArguments(argResults);
   var outPaths = argResults['out'] as List<String>;
   var moduleFormats = parseModuleFormatOption(argResults);
