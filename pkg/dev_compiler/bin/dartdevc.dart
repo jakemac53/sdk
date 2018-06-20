@@ -41,7 +41,7 @@ class _CompilerWorker extends AsyncWorkerLoop {
   final List<String> _startupArgs;
 
   final packageBundleCache = new WorkerPackageBundleCache(
-      PhysicalResourceProvider.INSTANCE, 256 * 1024 * 1024);
+      PhysicalResourceProvider.INSTANCE, 1024 * 1024 * 1024);
 
   _CompilerWorker(this._startupArgs) : super();
 
