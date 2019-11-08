@@ -7,8 +7,8 @@ library kernel.transformations.json_decode_experimental;
 import '../core_types.dart';
 import '../ast.dart';
 
-final _jsonTransformerUri =
-    Uri(scheme: 'package', path: 'json_transformer/json_transformer.dart');
+final _jsonAutoDecodeUri =
+    Uri(scheme: 'package', path: 'json_auto_decode/json_auto_decode.dart');
 
 class JsonDecodeExperimentalTransformer extends Transformer {
   final CoreTypes coreTypes;
@@ -28,8 +28,8 @@ class JsonDecodeExperimentalTransformer extends Transformer {
     node.transformChildren(this);
     final procedure = node.target;
     if (!procedure.isStatic) return node;
-    if (procedure.enclosingLibrary.importUri == _jsonTransformerUri &&
-        procedure.name.name == 'jsonDecodeExperimental') {
+    if (procedure.enclosingLibrary.importUri == _jsonAutoDecodeUri &&
+        procedure.name.name == 'jsonAutoDecode') {
       // We know we have exactly one type argument.
       var typeArg = node.arguments.types.first as InterfaceType;
       var jsonVar = VariableDeclaration(
@@ -63,7 +63,7 @@ class JsonDecodeExperimentalTransformer extends Transformer {
     } else if (type is InterfaceType) {
       var library = type.classNode.enclosingLibrary;
       if (library.importUri.scheme != 'dart') {
-        if (library.importUri == _jsonTransformerUri) {
+        if (library.importUri == _jsonAutoDecodeUri) {
           switch (type.classNode.name) {
             case 'LazyList':
             case 'LazyMap':

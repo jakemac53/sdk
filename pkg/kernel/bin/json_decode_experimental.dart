@@ -1,4 +1,4 @@
-import 'package:json_transformer/json_transformer.dart';
+import 'package:json_auto_decode/json_auto_decode.dart';
 
 class User<K, V, L> {
   final String name;
@@ -31,14 +31,14 @@ ${user.toString().split('\n').map((l) => '    $l').join('\n')}
 }
 
 void main() {
-  var users = jsonDecodeExperimental<List<User>>([
+  var users = jsonAutoDecode<List<User>>('''[
     {
       'name': 'Jack',
       'age': 10,
       'extras': [1],
       'mapExtras': {'cool': 0},
     },
-  ]);
+  ]''');
   print(users.runtimeType);
 
   // var decoded = jsonDecodeExperimental<

@@ -10,8 +10,8 @@ environment:
 dependencies:
   args: '>=0.13.4 <2.0.0'
   meta: ^1.0.0
-  json_transformer:
-    path: ../../../../json_transformer
+  json_auto_decode:
+    path: ../../../../json_auto_decode
 dev_dependencies:
   # expect: any
   front_end: any
