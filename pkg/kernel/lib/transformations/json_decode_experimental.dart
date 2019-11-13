@@ -156,7 +156,8 @@ Unsupported type: ${type}
           ], types: [
             valueType,
           ]),
-          type.classNode.members.firstWhere((m) => m.name == Name('map')),
+          coreTypes.iterableClass.members
+              .firstWhere((m) => m.name == Name('map')),
         );
       case 'List':
         var valueType = type.typeArguments.first;
@@ -178,10 +179,13 @@ Unsupported type: ${type}
             ], types: [
               valueType,
             ]),
+            coreTypes.iterableClass.members
+                .firstWhere((m) => m.name == Name('map')),
           ),
           Name('toList'),
           Arguments.empty(),
-          type.classNode.members.firstWhere((m) => m.name == Name('map')),
+          coreTypes.iterableClass.members
+              .firstWhere((m) => m.name == Name('toList')),
         );
       case 'Map':
         var keyType = type.typeArguments.first;
@@ -211,7 +215,7 @@ Unsupported type: ${type}
             keyType,
             valueType,
           ]),
-          type.classNode.members.firstWhere((m) => m.name == Name('map')),
+          coreTypes.mapClass.members.firstWhere((m) => m.name == Name('map')),
         );
       default:
         throw '''
