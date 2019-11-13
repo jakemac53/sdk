@@ -130,8 +130,9 @@ Unsupported type: ${type}
   /// by [argExpr].
   Expression _convertCoreType(InterfaceType type, Expression argExpr) {
     switch (type.className.canonicalName.name) {
-      case 'Null':
+      case 'Object':
         return argExpr;
+      case 'Null':
       case 'String':
       case 'bool':
       case 'int':
