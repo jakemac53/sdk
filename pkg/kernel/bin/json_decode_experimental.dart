@@ -5,41 +5,60 @@ class User<K, V, L> {
   final int age;
   final List<L> extras;
   final Map<K, V> mapExtras;
+  final List<User> users;
 
-  User({this.name, this.age, this.extras, this.mapExtras});
+  User({
+    this.name,
+    this.age,
+    this.extras,
+    this.mapExtras,
+    this.users,
+  });
 
   String toString() => '''
 name: $name
 age: $age
 extras: $extras
 mapExtras: $mapExtras
+users: $users
 ''';
 }
 
-class Login<K, V, L> {
-  final User<K, V, L> user;
-  final String password;
+// class Login<K, V, L> {
+//   final User<K, V, L> user;
+//   final String password;
 
-  Login({this.user, this.password});
+//   Login({this.user, this.password});
 
-  String toString() => '''
+//   String toString() => '''
 
-  user:
-${user.toString().split('\n').map((l) => '    $l').join('\n')}
-  password: $password
-''';
-}
+//   user:
+// ${user.toString().split('\n').map((l) => '    $l').join('\n')}
+//   password: $password
+// ''';
+// }
 
 void main() {
-  var users = jsonAutoDecode<List<User>>('''[
+  // print(jsonAutoDecode<List<int>>('[1,2,3]'));
+  var users = jsonAutoDecode<List<User<String, int, bool>>>('''[
     {
-      'name': 'Jack',
-      'age': 10,
-      'extras': [1],
-      'mapExtras': {'cool': 0},
-    },
+      "name": "Jack",
+      "age": 10,
+      "extras": [true, false],
+      "mapExtras": {"cool": 0},
+      "users": [
+        {
+          "name": "Jill",
+          "age": 23,
+          "extras": [1, 2, "3"],
+          "mapExtras": {"a": "oh"},
+          "users": []
+        }
+      ]
+    }
   ]''');
   print(users.runtimeType);
+  print(users);
 
   // var decoded = jsonDecodeExperimental<
   //     Map<String, List<Login<int, dynamic, User<String, int, int>>>>>({

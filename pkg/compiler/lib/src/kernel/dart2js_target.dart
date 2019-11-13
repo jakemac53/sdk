@@ -59,7 +59,7 @@ class Dart2jsTarget extends Target {
 
   @override
   List<String> get extraRequiredLibraries => _requiredLibraries[name];
-  
+
   @override
   List<String> get extraIndexedLibraries => const <String>[
         // Required for the JsonDecodeExperimentalTransformer.
@@ -96,7 +96,8 @@ class Dart2jsTarget extends Target {
       {void logger(String msg)}) {
     for (var library in libraries) {
       library.transformChildren(FunctionApplyTransformer());
-      library.transformChildren(JsonDecodeExperimentalTransformer(coreTypes));
+      library.transformChildren(
+          JsonDecodeExperimentalTransformer(coreTypes, library));
     }
   }
 
