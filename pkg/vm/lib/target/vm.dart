@@ -111,6 +111,12 @@ class VmTarget extends Target {
         component, coreTypes, libraries, diagnosticReporter,
         logger: logger);
     _patchVmConstants(coreTypes);
+
+    for (Library library in libraries) {
+      library.transformChildren(FunctionApplyTransformer());
+      library.transformChildren(
+          JsonDecodeExperimentalTransformer(coreTypes, library));
+    }
   }
 
   @override
@@ -161,12 +167,6 @@ class VmTarget extends Target {
     callSiteAnnotator.transformLibraries(
         component, libraries, coreTypes, hierarchy);
     logger?.call("Annotated call sites");
-
-    for (Library library in libraries) {
-      library.transformChildren(FunctionApplyTransformer());
-      library.transformChildren(
-          JsonDecodeExperimentalTransformer(coreTypes, library));
-    }
   }
 
   @override

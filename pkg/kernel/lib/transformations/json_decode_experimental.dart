@@ -37,24 +37,52 @@ class JsonDecodeExperimentalTransformer extends Transformer {
     node.transformChildren(this);
     final procedure = node.target;
     if (!procedure.isStatic) return node;
-    if (procedure.enclosingLibrary.importUri == _jsonAutoDecodeUri &&
-        procedure.name.name == 'jsonAutoDecode') {
-      // We know we have exactly one type argument.
-      var typeArg = node.arguments.types.first as InterfaceType;
-      var jsonVar = VariableDeclaration(
-        'json',
-        type: const DynamicType(),
-        initializer: StaticInvocation(
-            coreTypes.index
-                .getLibrary('dart:convert')
-                .procedures
-                .firstWhere((p) => p.name.name == 'jsonDecode'),
-            Arguments(node.arguments.positional)),
-      );
+    if (procedure.enclosingLibrary.importUri == _jsonAutoDecodeUri) {
+      InterfaceType typeArg;
+      VariableDeclaration jsonVar;
+      VariableDeclaration jsonDecoderVar;
+      if (procedure.name.name == 'jsonAutoDecode') {
+        // We know we have exactly one type argument.
+        typeArg = node.arguments.types.first as InterfaceType;
+        jsonVar = VariableDeclaration(
+          'json',
+          type: const DynamicType(),
+          initializer: StaticInvocation(
+            coreTypes.index.getTopLevelMember('dart:convert', 'jsonDecode'),
+            Arguments(node.arguments.positional),
+          ),
+        );
+      } else if (procedure.name.name == 'jsonAutoDecodeFromBytes') {
+        // We know we have exactly one type argument.
+        typeArg = node.arguments.types.first as InterfaceType;
+        var utf8Codec = StaticGet(
+            coreTypes.index.getTopLevelMember('dart:convert', 'utf8'));
+        var jsonCodec = StaticGet(
+            coreTypes.index.getTopLevelMember('dart:convert', 'json'));
+        jsonDecoderVar = VariableDeclaration(
+          'jsonDecoder',
+          initializer: MethodInvocation(
+            jsonCodec,
+            Name('fuse'),
+            Arguments([utf8Codec]),
+          ),
+        );
+        jsonVar = VariableDeclaration('json',
+            type: const DynamicType(),
+            initializer: MethodInvocation(
+              VariableGet(jsonDecoderVar),
+              Name('decode'),
+              Arguments(node.arguments.positional),
+            ));
+      } else {
+        return node;
+      }
+
       var newInstanceExpr = _deserialize(typeArg, VariableGet(jsonVar));
       var expr = MethodInvocation(
           FunctionExpression(FunctionNode(
             Block([
+              if (jsonDecoderVar != null) jsonDecoderVar,
               jsonVar,
               ReturnStatement(newInstanceExpr),
             ]),
@@ -63,9 +91,8 @@ class JsonDecodeExperimentalTransformer extends Transformer {
           Name('call'),
           Arguments.empty());
       return expr;
-    } else {
-      return node;
     }
+    return node;
   }
 
   /// Invokes the deserializer for [type] with [argExpr].
@@ -86,7 +113,8 @@ class JsonDecodeExperimentalTransformer extends Transformer {
       var procedure = Procedure(
           Name('_\$deserializer${deserializers.length}', library),
           ProcedureKind.Method,
-          fnNode)
+          fnNode,
+          isStatic: true)
         // Dart2js requires a valid file offset and uri for all nodes (or one
         // of their parents). We treat these nodes as being located at the
         // offset of the static invocation that generated them.

@@ -132,12 +132,6 @@ class DevCompilerTarget extends Target {
     for (var library in libraries) {
       _CovarianceTransformer(library).transform();
     }
-
-    for (Library library in libraries) {
-      library.transformChildren(FunctionApplyTransformer());
-      library.transformChildren(
-          JsonDecodeExperimentalTransformer(coreTypes, library));
-    }
   }
 
   @override
@@ -152,6 +146,12 @@ class DevCompilerTarget extends Target {
         _widgetTracker = WidgetCreatorTracker();
       }
       _widgetTracker.transform(component, libraries);
+    }
+
+    for (Library library in libraries) {
+      library.transformChildren(FunctionApplyTransformer());
+      library.transformChildren(
+          JsonDecodeExperimentalTransformer(coreTypes, library));
     }
   }
 

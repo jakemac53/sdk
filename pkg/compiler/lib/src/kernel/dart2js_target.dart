@@ -7,8 +7,9 @@
 library compiler.src.kernel.dart2js_target;
 
 import 'package:kernel/ast.dart' as ir;
-import 'package:kernel/core_types.dart';
 import 'package:kernel/class_hierarchy.dart';
+import 'package:kernel/core_types.dart';
+import 'package:kernel/kernel.dart';
 import 'package:kernel/target/targets.dart';
 import 'invocation_mirror_constants.dart';
 import 'package:kernel/transformations/function_apply.dart'
@@ -92,6 +93,14 @@ class Dart2jsTarget extends Target {
       ClassHierarchy hierarchy,
       List<ir.Library> libraries,
       Map<String, String> environmentDefines,
+      DiagnosticReporter diagnosticReporter,
+      {void Function(String msg) logger}) {}
+
+  @override
+  void performPreConstantEvaluationTransformations(
+      Component component,
+      CoreTypes coreTypes,
+      List<Library> libraries,
       DiagnosticReporter diagnosticReporter,
       {void logger(String msg)}) {
     for (var library in libraries) {
