@@ -72,12 +72,17 @@ class JsonDecodeExperimentalTransformer extends Transformer {
   ///
   /// If a deserializer does not exist then a [Procedure] in the current
   /// library is created, added to [deserializers], and invoked.
-  Expression _deserialize(DartType type, Expression argExpr) {
+  Expression _deserialize(DartType type, Expression argExpr,
+      {Expression defaultValue}) {
     if (!deserializers.containsKey(type)) {
+      var jsonVar = VariableDeclaration('json');
+      var defaultVar = VariableDeclaration('defaultValue');
       // The function body is assigned lazily to prevent infinite
       // recursion during expansion (the _convert call here).
       var fnNode = FunctionNode(null,
-          positionalParameters: [VariableDeclaration('j')], returnType: type);
+          positionalParameters: [jsonVar],
+          namedParameters: [defaultVar],
+          returnType: type);
       var procedure = Procedure(
           Name('_\$deserializer${deserializers.length}', library),
           ProcedureKind.Method,
@@ -91,16 +96,23 @@ class JsonDecodeExperimentalTransformer extends Transformer {
       deserializers[type] = procedure;
 
       fnNode.body = ReturnStatement(
-          _convert(type, VariableGet(fnNode.positionalParameters.first)))
+          _convert(type, VariableGet(jsonVar), VariableGet(defaultVar)))
         ..parent = fnNode;
     }
-
-    return StaticInvocation(deserializers[type], Arguments([argExpr]));
+    return StaticInvocation(
+        deserializers[type],
+        Arguments([
+          argExpr
+        ], named: [
+          if (defaultValue != null)
+            NamedExpression('defaultValue', defaultValue)
+        ]));
   }
 
   /// Creates an arbitrary instance of Type [type] from the dynamic json object
   /// [jsonArg] using [deserializers].
-  Expression _convert(DartType type, VariableGet jsonArg) {
+  Expression _convert(
+      DartType type, VariableGet jsonArg, VariableGet defaultValueArg) {
     if (type is DynamicType) {
       return jsonArg;
     } else if (type is InterfaceType) {
@@ -110,14 +122,14 @@ class JsonDecodeExperimentalTransformer extends Transformer {
           switch (type.classNode.name) {
             case 'LazyList':
             case 'LazyMap':
-              return _convertLazyCollection(type, jsonArg, deserializers);
+              return _convertLazyCollection(type, jsonArg, defaultValueArg);
             default:
               throw UnsupportedError('Unsupported type $type');
           }
         }
-        return _convertCustomType(type, jsonArg);
+        return _convertCustomType(type, jsonArg, defaultValueArg);
       } else if (library == coreTypes.coreLibrary) {
-        return _convertCoreType(type, jsonArg);
+        return _convertCoreType(type, jsonArg, defaultValueArg);
       }
     }
 
@@ -128,96 +140,113 @@ Unsupported type: ${type}
 
   /// Creates a new instance of the core type [type] from the object referenced
   /// by [argExpr].
-  Expression _convertCoreType(InterfaceType type, Expression argExpr) {
+  Expression _convertCoreType(
+      InterfaceType type, Expression argExpr, Expression defaultValueExpr) {
     switch (type.className.canonicalName.name) {
       case 'Object':
         return argExpr;
       case 'Null':
+        return AsExpression(argExpr, type)..isTypeError = true;
       case 'String':
       case 'bool':
       case 'int':
       case 'double':
-        return AsExpression(argExpr, type)..isTypeError = true;
+        return _nullCheckTernary(argExpr, defaultValueExpr,
+            AsExpression(argExpr, type)..isTypeError = true, type);
       case 'Iterable':
         var valueType = type.typeArguments.first;
         var vParam = VariableDeclaration('v', type: const DynamicType());
-        return MethodInvocation(
-          AsExpression(argExpr, iterableDynamic)..isTypeError = true,
-          Name('map'),
-          Arguments([
-            FunctionExpression(
-              FunctionNode(
-                ReturnStatement(
-                  _deserialize(valueType, VariableGet(vParam)),
+        return _nullCheckTernary(
+            argExpr,
+            defaultValueExpr,
+            MethodInvocation(
+              AsExpression(argExpr, iterableDynamic)..isTypeError = true,
+              Name('map'),
+              Arguments([
+                FunctionExpression(
+                  FunctionNode(
+                    ReturnStatement(
+                      _deserialize(valueType, VariableGet(vParam)),
+                    ),
+                    returnType: valueType,
+                    positionalParameters: [vParam],
+                  ),
                 ),
-                returnType: valueType,
-                positionalParameters: [vParam],
-              ),
+              ], types: [
+                valueType,
+              ]),
+              coreTypes.iterableClass.members
+                  .firstWhere((m) => m.name == Name('map')),
             ),
-          ], types: [
-            valueType,
-          ]),
-          coreTypes.iterableClass.members
-              .firstWhere((m) => m.name == Name('map')),
-        );
+            type);
       case 'List':
         var valueType = type.typeArguments.first;
         var vParam = VariableDeclaration('v', type: const DynamicType());
-        return MethodInvocation(
-          MethodInvocation(
-            AsExpression(argExpr, iterableDynamic)..isTypeError = true,
-            Name('map'),
-            Arguments([
-              FunctionExpression(
-                FunctionNode(
-                  ReturnStatement(
-                    _deserialize(valueType, VariableGet(vParam)),
+        return _nullCheckTernary(
+            argExpr,
+            defaultValueExpr,
+            MethodInvocation(
+              MethodInvocation(
+                AsExpression(argExpr, iterableDynamic)..isTypeError = true,
+                Name('map'),
+                Arguments([
+                  FunctionExpression(
+                    FunctionNode(
+                      ReturnStatement(
+                        _deserialize(valueType, VariableGet(vParam)),
+                      ),
+                      returnType: valueType,
+                      positionalParameters: [vParam],
+                    ),
                   ),
-                  returnType: valueType,
-                  positionalParameters: [vParam],
-                ),
+                ], types: [
+                  valueType,
+                ]),
+                coreTypes.iterableClass.members
+                    .firstWhere((m) => m.name == Name('map')),
               ),
-            ], types: [
-              valueType,
-            ]),
-            coreTypes.iterableClass.members
-                .firstWhere((m) => m.name == Name('map')),
-          ),
-          Name('toList'),
-          Arguments.empty(),
-          coreTypes.iterableClass.members
-              .firstWhere((m) => m.name == Name('toList')),
-        );
+              Name('toList'),
+              Arguments.empty(),
+              coreTypes.iterableClass.members
+                  .firstWhere((m) => m.name == Name('toList')),
+            ),
+            type);
       case 'Map':
         var keyType = type.typeArguments.first;
         var valueType = type.typeArguments[1];
         var kParam = VariableDeclaration('k', type: const DynamicType());
         var vParam = VariableDeclaration('v', type: const DynamicType());
-        return MethodInvocation(
-          AsExpression(argExpr, mapStringDynamic)..isTypeError = true,
-          Name('map'),
-          Arguments([
-            FunctionExpression(
-              FunctionNode(
-                ReturnStatement(ConstructorInvocation(
-                    mapEntryClass.constructors.single,
-                    Arguments([
-                      _deserialize(keyType, VariableGet(kParam)),
-                      _deserialize(valueType, VariableGet(vParam))
-                    ], types: [
-                      keyType,
-                      valueType,
-                    ]))),
-                returnType: InterfaceType(mapEntryClass, [keyType, valueType]),
-                positionalParameters: [kParam, vParam],
-              ),
+        return _nullCheckTernary(
+            argExpr,
+            defaultValueExpr,
+            MethodInvocation(
+              AsExpression(argExpr, mapStringDynamic)..isTypeError = true,
+              Name('map'),
+              Arguments([
+                FunctionExpression(
+                  FunctionNode(
+                    ReturnStatement(ConstructorInvocation(
+                        mapEntryClass.constructors.single,
+                        Arguments([
+                          _deserialize(keyType, VariableGet(kParam)),
+                          _deserialize(valueType, VariableGet(vParam))
+                        ], types: [
+                          keyType,
+                          valueType,
+                        ]))),
+                    returnType:
+                        InterfaceType(mapEntryClass, [keyType, valueType]),
+                    positionalParameters: [kParam, vParam],
+                  ),
+                ),
+              ], types: [
+                keyType,
+                valueType,
+              ]),
+              coreTypes.mapClass.members
+                  .firstWhere((m) => m.name == Name('map')),
             ),
-          ], types: [
-            keyType,
-            valueType,
-          ]),
-          coreTypes.mapClass.members.firstWhere((m) => m.name == Name('map')),
-        );
+            type);
       default:
         throw '''
 Unsupported core type: ${type.className};
@@ -226,8 +255,8 @@ Unsupported core type: ${type.className};
   }
 
   /// Creates a custom instance of [type] from the object referenced by [argExpr].
-  ConstructorInvocation _convertCustomType(
-      InterfaceType type, Expression argExpr) {
+  ConditionalExpression _convertCustomType(
+      InterfaceType type, Expression argExpr, Expression defaultValueExpr) {
     var clazz = type.classNode;
 
     var constructor = clazz.constructors
@@ -254,14 +283,27 @@ jsonAutoDecode only works for core types and types with unnamed constructors.
         NamedExpression(param.name, _parameterValue(type, param, argExpr))
     ];
 
-    return ConstructorInvocation(
-        constructor,
-        Arguments(
-          positionalArgs,
-          named: namedArgs,
-          types: type.typeArguments,
-        ));
+    return _nullCheckTernary(
+        argExpr,
+        defaultValueExpr,
+        ConstructorInvocation(
+            constructor,
+            Arguments(
+              positionalArgs,
+              named: namedArgs,
+              types: type.typeArguments,
+            )),
+        type);
   }
+
+  ConditionalExpression _nullCheckTernary(Expression argExpr, Expression ifNull,
+          Expression ifNotNull, DartType type) =>
+      ConditionalExpression(
+        MethodInvocation(argExpr, Name('=='), Arguments([NullLiteral()])),
+        ifNull ?? NullLiteral(),
+        ifNotNull,
+        type,
+      );
 
   Expression _parameterValue(InterfaceType parent,
       VariableDeclaration methodParam, Expression argExpr) {
@@ -302,11 +344,12 @@ jsonAutoDecode only works for core types and types with unnamed constructors.
     }).toList();
 
     paramType = InterfaceType(paramType.classNode, newTypeArgs);
-    return _deserialize(paramType, mapValueExpr);
+    return _deserialize(paramType, mapValueExpr,
+        defaultValue: methodParam.initializer);
   }
 
-  ConstructorInvocation _convertLazyCollection(InterfaceType type,
-      Expression argExpr, Map<DartType, Procedure> deserializers) {
+  ConditionalExpression _convertLazyCollection(
+      InterfaceType type, Expression argExpr, Expression defaultValueExpr) {
     var clazz = type.classNode;
     var targetType = type.typeArguments.first;
     var vParam = VariableDeclaration('v', type: const DynamicType());
@@ -316,11 +359,15 @@ jsonAutoDecode only works for core types and types with unnamed constructors.
           returnType: targetType,
           positionalParameters: [vParam]),
     );
-    return ConstructorInvocation(
-        clazz.constructors.firstWhere((c) => c.name.name == ''),
-        Arguments(
-          [argExpr, converter],
-          types: type.typeArguments,
-        ));
+    return _nullCheckTernary(
+        argExpr,
+        defaultValueExpr,
+        ConstructorInvocation(
+            clazz.constructors.firstWhere((c) => c.name.name == ''),
+            Arguments(
+              [argExpr, converter],
+              types: type.typeArguments,
+            )),
+        type);
   }
 }
