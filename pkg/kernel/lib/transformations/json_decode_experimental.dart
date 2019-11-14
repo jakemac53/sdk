@@ -17,6 +17,9 @@ class JsonDecodeExperimentalTransformer extends Transformer {
   final InterfaceType mapStringDynamic;
   final Class mapEntryClass;
 
+  /// Nullable, indicates we can skip the transformation if null.
+  final Library jsonAutoDecodeLib;
+
   /// We add procedures to the library and they are shared across static
   /// invocations within that library.
   final deserializers = <DartType, Procedure>{};
@@ -29,10 +32,20 @@ class JsonDecodeExperimentalTransformer extends Transformer {
             InterfaceType(coreTypes.iterableClass, const [DynamicType()]),
         mapStringDynamic = InterfaceType(coreTypes.mapClass,
             [coreTypes.stringClass.thisType, DynamicType()]),
-        mapEntryClass = coreTypes.index.getClass('dart:core', 'MapEntry');
+        mapEntryClass = coreTypes.index.getClass('dart:core', 'MapEntry'),
+        jsonAutoDecodeLib = library.dependencies
+            .firstWhere(
+                (l) =>
+                    l.isImport &&
+                    l.targetLibrary.importUri == _jsonAutoDecodeUri,
+                orElse: () => null)
+            ?.targetLibrary;
 
   @override
   Expression visitStaticInvocation(StaticInvocation node) {
+    // No dependency on this package, just return early.
+    if (jsonAutoDecodeLib == null) return node;
+
     _current = node;
     node.transformChildren(this);
     final procedure = node.target;
@@ -127,6 +140,7 @@ class JsonDecodeExperimentalTransformer extends Transformer {
           _convert(type, VariableGet(jsonVar), VariableGet(defaultVar)))
         ..parent = fnNode;
     }
+
     return StaticInvocation(
         deserializers[type],
         Arguments([
@@ -182,99 +196,65 @@ Unsupported type: ${type}
         return _nullCheckTernary(argExpr, defaultValueExpr,
             AsExpression(argExpr, type)..isTypeError = true, type);
       case 'Iterable':
-        var valueType = type.typeArguments.first;
-        var vParam = VariableDeclaration('v', type: const DynamicType());
-        return _nullCheckTernary(
-            argExpr,
-            defaultValueExpr,
-            MethodInvocation(
-              AsExpression(argExpr, iterableDynamic)..isTypeError = true,
-              Name('map'),
-              Arguments([
-                FunctionExpression(
-                  FunctionNode(
-                    ReturnStatement(
-                      _deserialize(valueType, VariableGet(vParam)),
-                    ),
-                    returnType: valueType,
-                    positionalParameters: [vParam],
-                  ),
-                ),
-              ], types: [
-                valueType,
-              ]),
-              coreTypes.iterableClass.members
-                  .firstWhere((m) => m.name == Name('map')),
-            ),
-            type);
       case 'List':
+        // Iterable and list are treated identically other than calling a
+        // different procedure.
+        var decoder = jsonAutoDecodeLib.procedures.firstWhere((p) =>
+            p.name.name == 'convert${type.className.canonicalName.name}');
         var valueType = type.typeArguments.first;
-        var vParam = VariableDeclaration('v', type: const DynamicType());
-        return _nullCheckTernary(
-            argExpr,
-            defaultValueExpr,
-            MethodInvocation(
-              MethodInvocation(
-                AsExpression(argExpr, iterableDynamic)..isTypeError = true,
-                Name('map'),
-                Arguments([
-                  FunctionExpression(
-                    FunctionNode(
-                      ReturnStatement(
-                        _deserialize(valueType, VariableGet(vParam)),
-                      ),
-                      returnType: valueType,
-                      positionalParameters: [vParam],
-                    ),
-                  ),
-                ], types: [
-                  valueType,
-                ]),
-                coreTypes.iterableClass.members
-                    .firstWhere((m) => m.name == Name('map')),
-              ),
-              Name('toList'),
-              Arguments.empty(),
-              coreTypes.iterableClass.members
-                  .firstWhere((m) => m.name == Name('toList')),
-            ),
-            type);
+        var lambdaArg = VariableDeclaration('v');
+        return StaticInvocation(
+            decoder,
+            Arguments(
+              [
+                argExpr,
+                FunctionExpression(FunctionNode(
+                    ReturnStatement(
+                        _deserialize(valueType, VariableGet(lambdaArg))),
+                    positionalParameters: [lambdaArg],
+                    returnType: valueType))
+              ],
+              named: [
+                if (defaultValueExpr != null)
+                  NamedExpression('defaultValue', defaultValueExpr)
+              ],
+              types: [const DynamicType(), valueType],
+            ));
       case 'Map':
+        var decoder = jsonAutoDecodeLib.procedures
+            .firstWhere((p) => p.name.name == 'convertMap');
+
         var keyType = type.typeArguments.first;
         var valueType = type.typeArguments[1];
-        var kParam = VariableDeclaration('k', type: const DynamicType());
-        var vParam = VariableDeclaration('v', type: const DynamicType());
-        return _nullCheckTernary(
-            argExpr,
-            defaultValueExpr,
-            MethodInvocation(
-              AsExpression(argExpr, mapStringDynamic)..isTypeError = true,
-              Name('map'),
-              Arguments([
-                FunctionExpression(
-                  FunctionNode(
-                    ReturnStatement(ConstructorInvocation(
-                        mapEntryClass.constructors.single,
-                        Arguments([
-                          _deserialize(keyType, VariableGet(kParam)),
-                          _deserialize(valueType, VariableGet(vParam))
-                        ], types: [
-                          keyType,
-                          valueType,
-                        ]))),
-                    returnType:
-                        InterfaceType(mapEntryClass, [keyType, valueType]),
-                    positionalParameters: [kParam, vParam],
-                  ),
-                ),
-              ], types: [
+        var kLambdaArg = VariableDeclaration('k');
+        var vLambdaArg = VariableDeclaration('v');
+        return StaticInvocation(
+            decoder,
+            Arguments(
+              [
+                argExpr,
+                FunctionExpression(FunctionNode(
+                    ReturnStatement(
+                        _deserialize(keyType, VariableGet(kLambdaArg))),
+                    positionalParameters: [kLambdaArg],
+                    returnType: keyType)),
+                FunctionExpression(FunctionNode(
+                    ReturnStatement(
+                        _deserialize(valueType, VariableGet(vLambdaArg))),
+                    positionalParameters: [vLambdaArg],
+                    returnType: valueType)),
+              ],
+              named: [
+                if (defaultValueExpr != null)
+                  NamedExpression('defaultValue', defaultValueExpr)
+              ],
+              types: [
+                const DynamicType(),
+                const DynamicType(),
                 keyType,
                 valueType,
-              ]),
-              coreTypes.mapClass.members
-                  .firstWhere((m) => m.name == Name('map')),
-            ),
-            type);
+              ],
+            ));
       default:
         throw '''
 Unsupported core type: ${type.className};
