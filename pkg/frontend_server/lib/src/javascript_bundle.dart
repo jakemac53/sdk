@@ -38,7 +38,7 @@ class JavaScriptBundler {
       );
       _summaries.add(summaryComponent);
       _summaryUris.add(uri);
-      _moduleImportForSummary[uri] = '${urlForComponentUri(uri)}.js';
+      _moduleImportForSummary[uri] = '${urlForComponentUri(uri)}.lib.js';
       _uriToComponent[uri] = summaryComponent;
     }
   }
@@ -91,8 +91,8 @@ class JavaScriptBundler {
         ModuleFormat.amd,
         inlineSourceMap: true,
         buildSourceMap: true,
-        jsUrl: '$moduleUrl',
-        mapUrl: '$moduleUrl.js.map',
+        jsUrl: '$moduleUrl.lib.js',
+        mapUrl: '$moduleUrl.lib.js.map',
         customScheme: _fileSystemScheme,
         multiRootOutputPath: p.current,
       );
