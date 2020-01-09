@@ -2,12 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:io';
-
 import 'package:kernel/ast.dart';
 import 'package:kernel/util/graph.dart';
 
-import 'package:vm/kernel_front_end.dart';
 import 'package:front_end/src/api_unstable/vm.dart' show FileSystem;
 
 /// Compute the strongly connected components for JavaScript compilation.
@@ -31,7 +28,6 @@ class StrongComponents {
     this.component,
     this.loadedLibraries,
     this.mainUri, [
-    this.packagesUri,
     this.fileSystem,
   ]);
 
@@ -46,9 +42,6 @@ class StrongComponents {
 
   /// The main URI for thiis application.
   final Uri mainUri;
-
-  /// The URI of the .packages file.
-  final Uri packagesUri;
 
   /// The filesystem instance for resolving files.
   final FileSystem fileSystem;

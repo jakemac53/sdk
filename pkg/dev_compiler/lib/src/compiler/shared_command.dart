@@ -312,7 +312,7 @@ Uri sourcePathToRelativeUri(String source, {bool windows}) {
 /// [multiRootOutputPath].
 // TODO(jmesserly): find a new home for this.
 Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
-    {String multiRootOutputPath}) {
+    {String multiRootOutputPath, String mapSourcesBase}) {
   var map = Map.from(sourceMap);
   // Convert to a local file path if it's not.
   sourceMapPath = sourcePathToUri(p.absolute(p.fromUri(sourceMapPath))).path;
@@ -330,8 +330,10 @@ Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
         var shortPath = uri.path
             .replaceAll('/sdk/', '/dart-sdk/')
             .replaceAll('/sdk_nnbd/', '/dart-sdk/');
+        if (shortPath.startsWith('/lib')) {
+          shortPath = shortPath.substring(4);
+        }
         var multiRootPath = "${multiRootOutputPath ?? ''}$shortPath";
-        multiRootPath = multiRootPath;
         multiRootPath = p.url.relative(multiRootPath, from: sourceMapDir);
         return multiRootPath;
       }
@@ -342,7 +344,8 @@ Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
     sourcePath = sourcePathToUri(p.absolute(p.fromUri(uri))).path;
 
     // Fall back to a relative path against the source map itself.
-    sourcePath = p.url.relative(sourcePath, from: sourceMapDir);
+    sourcePath =
+        p.url.relative(sourcePath, from: mapSourcesBase ?? sourceMapDir);
 
     // Convert from relative local path to relative URI.
     return p.toUri(sourcePath).path;

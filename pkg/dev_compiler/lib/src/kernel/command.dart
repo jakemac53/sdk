@@ -541,6 +541,9 @@ JSCode jsProgramToCode(js_ast.Program moduleTree, ModuleFormat format,
     bool inlineSourceMap = false,
     String jsUrl,
     String mapUrl,
+    // Optional, directory for creating relative paths to the sources from the
+    // source map itself (when mapUrl isn't otherwise useful for doing so).
+    String mapSourcesBase,
     String customScheme,
     String multiRootOutputPath}) {
   var opts = js_ast.JavaScriptPrintingOptions(
@@ -561,8 +564,15 @@ JSCode jsProgramToCode(js_ast.Program moduleTree, ModuleFormat format,
 
   Map builtMap;
   if (buildSourceMap && sourceMap != null) {
+<<<<<<< HEAD
     builtMap = placeSourceMap(sourceMap.build(jsUrl), mapUrl, customScheme,
         multiRootOutputPath: multiRootOutputPath);
+=======
+    builtMap = placeSourceMap(
+        sourceMap.build(jsUrl), mapUrl, bazelMapping, customScheme,
+        multiRootOutputPath: multiRootOutputPath,
+        mapSourcesBase: mapSourcesBase);
+>>>>>>> fix up sources uris
     var jsDir = p.dirname(p.fromUri(jsUrl));
     var relative = p.relative(p.fromUri(mapUrl), from: jsDir);
     var relativeMapUrl = p.toUri(relative).toString();

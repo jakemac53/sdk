@@ -10,6 +10,7 @@ import 'package:kernel/ast.dart';
 import 'package:kernel/class_hierarchy.dart';
 import 'package:kernel/core_types.dart';
 import 'package:path/path.dart' as p;
+import 'package:package_resolver/package_resolver.dart';
 
 import 'strong_components.dart';
 
@@ -23,8 +24,8 @@ import 'strong_components.dart';
 /// an incremental build, a different file is written for each which contains
 /// only the updated libraries.
 class JavaScriptBundler {
-  JavaScriptBundler(
-      this._originalComponent, this._strongComponents, this._fileSystemScheme) {
+  JavaScriptBundler(this._originalComponent, this._strongComponents,
+      this._fileSystemScheme, this._packageResolver) {
     _summaries = <Component>[];
     _summaryUris = <Uri>[];
     _moduleImportForSummary = <Uri, String>{};
@@ -46,6 +47,7 @@ class JavaScriptBundler {
   final StrongComponents _strongComponents;
   final Component _originalComponent;
   final String _fileSystemScheme;
+  final PackageResolver _packageResolver;
 
   List<Component> _summaries;
   List<Uri> _summaryUris;
@@ -53,13 +55,13 @@ class JavaScriptBundler {
   Map<Uri, Component> _uriToComponent;
 
   /// Compile each component into a single JavaScript module.
-  void compile(
+  Future<void> compile(
       ClassHierarchy classHierarchy,
       CoreTypes coreTypes,
       Set<Library> loadedLibraries,
       IOSink codeSink,
       IOSink manifestSink,
-      IOSink sourceMapsSink) {
+      IOSink sourceMapsSink) async {
     var codeOffset = 0;
     var sourceMapOffset = 0;
     final manifest = <String, Map<String, List<int>>>{};
@@ -85,7 +87,13 @@ class JavaScriptBundler {
       );
       final jsModule = compiler.emitModule(
           summaryComponent, _summaries, _summaryUris, _moduleImportForSummary);
+
       final moduleUrl = urlForComponentUri(moduleUri);
+      String mapSourcesBase;
+      if (moduleUri.scheme == 'package') {
+        mapSourcesBase =
+            p.dirname((await _packageResolver.resolveUri(moduleUri)).path);
+      }
       final code = jsProgramToCode(
         jsModule,
         ModuleFormat.amd,
@@ -93,8 +101,11 @@ class JavaScriptBundler {
         buildSourceMap: true,
         jsUrl: '$moduleUrl.lib.js',
         mapUrl: '$moduleUrl.lib.js.map',
+        mapSourcesBase: mapSourcesBase,
         customScheme: _fileSystemScheme,
-        multiRootOutputPath: p.current,
+        multiRootOutputPath: moduleUri.scheme == 'package'
+            ? '/packages/${moduleUri.pathSegments.first}'
+            : null,
       );
       final codeBytes = utf8.encode(code.code);
       final sourceMapBytes = utf8.encode(json.encode(code.sourceMap));

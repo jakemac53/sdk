@@ -25,6 +25,7 @@ import 'package:kernel/binary/limited_ast_to_binary.dart';
 import 'package:kernel/kernel.dart'
     show Component, loadComponentSourceFromBytes;
 import 'package:kernel/target/targets.dart' show targets, TargetFlags;
+import 'package:package_resolver/package_resolver.dart';
 import 'package:path/path.dart' as path;
 import 'package:usage/uuid/uuid.dart';
 
@@ -529,14 +530,12 @@ class FrontendCompiler implements CompilerInterface {
   /// Write a JavaScript bundle containg the provided component.
   Future<void> writeJavascriptBundle(KernelCompilationResults results,
       String filename, String fileSystemScheme) async {
+    var packageResolver = await PackageResolver.loadConfig(
+        _compilerOptions.packagesFileUri ?? '.packages');
     final Component component = results.component;
     // Compute strongly connected components.
-    final strongComponents = StrongComponents(
-        component,
-        results.loadedLibraries,
-        _mainSource,
-        _compilerOptions.packagesFileUri,
-        _compilerOptions.fileSystem);
+    final strongComponents = StrongComponents(component,
+        results.loadedLibraries, _mainSource, _compilerOptions.fileSystem);
     await strongComponents.computeModules();
 
     // Create JavaScript bundler.
@@ -546,12 +545,12 @@ class FrontendCompiler implements CompilerInterface {
     if (!sourceFile.parent.existsSync()) {
       sourceFile.parent.createSync(recursive: true);
     }
-    final bundler =
-        JavaScriptBundler(component, strongComponents, fileSystemScheme);
+    final bundler = JavaScriptBundler(
+        component, strongComponents, fileSystemScheme, packageResolver);
     final sourceFileSink = sourceFile.openWrite();
     final manifestFileSink = manifestFile.openWrite();
     final sourceMapsFileSink = sourceMapsFile.openWrite();
-    bundler.compile(
+    await bundler.compile(
         results.classHierarchy,
         results.coreTypes,
         results.loadedLibraries,
