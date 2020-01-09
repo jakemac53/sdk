@@ -9,6 +9,7 @@ import 'package:dev_compiler/dev_compiler.dart';
 import 'package:kernel/ast.dart';
 import 'package:kernel/class_hierarchy.dart';
 import 'package:kernel/core_types.dart';
+import 'package:path/path.dart' as p;
 
 import 'strong_components.dart';
 
@@ -22,7 +23,8 @@ import 'strong_components.dart';
 /// an incremental build, a different file is written for each which contains
 /// only the updated libraries.
 class JavaScriptBundler {
-  JavaScriptBundler(this._originalComponent, this._strongComponents) {
+  JavaScriptBundler(
+      this._originalComponent, this._strongComponents, this._fileSystemScheme) {
     _summaries = <Component>[];
     _summaryUris = <Uri>[];
     _moduleImportForSummary = <Uri, String>{};
@@ -36,13 +38,14 @@ class JavaScriptBundler {
       );
       _summaries.add(summaryComponent);
       _summaryUris.add(uri);
-      _moduleImportForSummary[uri] = '${uri.path}.js';
+      _moduleImportForSummary[uri] = '${urlForComponentUri(uri)}.js';
       _uriToComponent[uri] = summaryComponent;
     }
   }
 
   final StrongComponents _strongComponents;
   final Component _originalComponent;
+  final String _fileSystemScheme;
 
   List<Component> _summaries;
   List<Uri> _summaryUris;
@@ -66,7 +69,8 @@ class JavaScriptBundler {
           library.importUri.scheme == 'dart') {
         continue;
       }
-      final Uri moduleUri = _strongComponents.moduleAssignment[library.fileUri];
+      final Uri moduleUri =
+          _strongComponents.moduleAssignment[library.importUri];
       if (visited.contains(moduleUri)) {
         continue;
       }
@@ -81,12 +85,17 @@ class JavaScriptBundler {
       );
       final jsModule = compiler.emitModule(
           summaryComponent, _summaries, _summaryUris, _moduleImportForSummary);
-      final moduleUrl = moduleUri.toString();
-      final code = jsProgramToCode(jsModule, ModuleFormat.amd,
-          inlineSourceMap: true,
-          buildSourceMap: true,
-          jsUrl: '$moduleUrl',
-          mapUrl: '$moduleUrl.js.map');
+      final moduleUrl = urlForComponentUri(moduleUri);
+      final code = jsProgramToCode(
+        jsModule,
+        ModuleFormat.amd,
+        inlineSourceMap: true,
+        buildSourceMap: true,
+        jsUrl: '$moduleUrl',
+        mapUrl: '$moduleUrl.js.map',
+        customScheme: _fileSystemScheme,
+        multiRootOutputPath: p.current,
+      );
       final codeBytes = utf8.encode(code.code);
       final sourceMapBytes = utf8.encode(json.encode(code.sourceMap));
       codeSink.add(codeBytes);
@@ -104,3 +113,7 @@ class JavaScriptBundler {
     manifestSink.add(utf8.encode(json.encode(manifest)));
   }
 }
+
+String urlForComponentUri(Uri componentUri) => componentUri.scheme == 'package'
+    ? '/packages/${componentUri.path}'
+    : componentUri.path;

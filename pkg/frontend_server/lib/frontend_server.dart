@@ -456,7 +456,8 @@ class FrontendCompiler implements CompilerInterface {
       transformer?.transform(results.component);
 
       if (_compilerOptions.target.name == 'dartdevc') {
-        await writeJavascriptBundle(results, _kernelBinaryFilename);
+        await writeJavascriptBundle(
+            results, _kernelBinaryFilename, options['filesystem-scheme']);
       } else {
         await writeDillFile(results, _kernelBinaryFilename,
             filterExternal: importDill != null,
@@ -526,8 +527,8 @@ class FrontendCompiler implements CompilerInterface {
   }
 
   /// Write a JavaScript bundle containg the provided component.
-  Future<void> writeJavascriptBundle(
-      KernelCompilationResults results, String filename) async {
+  Future<void> writeJavascriptBundle(KernelCompilationResults results,
+      String filename, String fileSystemScheme) async {
     final Component component = results.component;
     // Compute strongly connected components.
     final strongComponents = StrongComponents(
@@ -545,7 +546,8 @@ class FrontendCompiler implements CompilerInterface {
     if (!sourceFile.parent.existsSync()) {
       sourceFile.parent.createSync(recursive: true);
     }
-    final bundler = JavaScriptBundler(component, strongComponents);
+    final bundler =
+        JavaScriptBundler(component, strongComponents, fileSystemScheme);
     final sourceFileSink = sourceFile.openWrite();
     final manifestFileSink = manifestFile.openWrite();
     final sourceMapsFileSink = sourceMapsFile.openWrite();
@@ -790,7 +792,8 @@ class FrontendCompiler implements CompilerInterface {
         deltaProgram.uriToSource.keys);
 
     if (_compilerOptions.target.name == 'dartdevc') {
-      await writeJavascriptBundle(results, _kernelBinaryFilename);
+      await writeJavascriptBundle(
+          results, _kernelBinaryFilename, _options['filesystem-scheme']);
     } else {
       await writeDillFile(results, _kernelBinaryFilename,
           incrementalSerializer: _generator.incrementalSerializer);

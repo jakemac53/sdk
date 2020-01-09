@@ -5,6 +5,7 @@
 import("../../build/dart/dart_action.gni")
 import("../../runtime/runtime_args.gni")
 import("../../sdk_args.gni")
+import("../create_timestamp.gni")
 import("../application_snapshot.gni")
 
 group("kernel-service") {
@@ -47,10 +48,22 @@ copy("copy_kernel-service_snapshot") {
   ]
 }
 
+create_timestamp_file("frontend_server_files_stamp") {
+  path = rebase_path("../../pkg/frontend_server/lib")
+  output = "$target_gen_dir/frontend_server_files.stamp"
+}
+
+create_timestamp_file("ddc_files_stamp") {
+  path = rebase_path("../../pkg/dev_compiler/lib")
+  output = "$target_gen_dir/ddc_files.stamp"
+}
+
 application_snapshot("frontend_server") {
   main_dart = "../../pkg/frontend_server/bin/frontend_server_starter.dart"
   deps = [
     "../../runtime/vm:kernel_platform_files($host_toolchain)",
+    ":frontend_server_files_stamp",
+    ":ddc_files_stamp",
   ]
   sdk_root = rebase_path("$root_out_dir")
   training_args = [
