@@ -330,7 +330,12 @@ Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
         var shortPath = uri.path
             .replaceAll('/sdk/', '/dart-sdk/')
             .replaceAll('/sdk_nnbd/', '/dart-sdk/');
+        // A multi-root uri starting with a path under `/lib` should be
+        // converted into a `/packages` path, strip the `/lib` part and
+        // rely on the `multiRootOutputPath` to be set to the proper
+        // packages dir.
         if (shortPath.startsWith('/lib')) {
+          assert(multiRootOutputPath.startsWith('/packages'));
           shortPath = shortPath.substring(4);
         }
         var multiRootPath = "${multiRootOutputPath ?? ''}$shortPath";
