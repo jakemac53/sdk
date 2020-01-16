@@ -564,15 +564,9 @@ JSCode jsProgramToCode(js_ast.Program moduleTree, ModuleFormat format,
 
   Map builtMap;
   if (buildSourceMap && sourceMap != null) {
-<<<<<<< HEAD
     builtMap = placeSourceMap(sourceMap.build(jsUrl), mapUrl, customScheme,
-        multiRootOutputPath: multiRootOutputPath);
-=======
-    builtMap = placeSourceMap(
-        sourceMap.build(jsUrl), mapUrl, bazelMapping, customScheme,
         multiRootOutputPath: multiRootOutputPath,
         mapSourcesBase: mapSourcesBase);
->>>>>>> fix up sources uris
     var jsDir = p.dirname(p.fromUri(jsUrl));
     var relative = p.relative(p.fromUri(mapUrl), from: jsDir);
     var relativeMapUrl = p.toUri(relative).toString();
