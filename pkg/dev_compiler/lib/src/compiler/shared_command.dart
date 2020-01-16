@@ -305,18 +305,20 @@ Uri sourcePathToRelativeUri(String source, {bool windows}) {
   return uri;
 }
 
-/// Adjusts the source paths in [sourceMap] to be relative to [sourceMapPath],
-/// and returns the new map.  Relative paths are in terms of URIs ('/'), not
-/// local OS paths (e.g., windows '\'). Sources with a multi-root scheme
-/// matching [multiRootScheme] are adjusted to be relative to
-/// [multiRootOutputPath].
+/// Adjusts the source paths in [sourceMap] to be relative to [sourceMapBase]
+/// (which defaults to parent dir of [sourceMapPath]), and returns the new map.
+/// Relative paths are in terms of URIs ('/'), not local OS paths (e.g.,
+/// windows '\'). Sources with a multi-root scheme matching [multiRootScheme]
+/// are adjusted to be relative to [multiRootOutputPath].
+///
 // TODO(jmesserly): find a new home for this.
 Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
-    {String multiRootOutputPath, String mapSourcesBase}) {
+    {String multiRootOutputPath, String sourceMapBase}) {
   var map = Map.from(sourceMap);
   // Convert to a local file path if it's not.
   sourceMapPath = sourcePathToUri(p.absolute(p.fromUri(sourceMapPath))).path;
   var sourceMapDir = p.url.dirname(sourceMapPath);
+  sourceMapBase ??= sourceMapDir;
   var list = (map['sources'] as List).toList();
 
   String makeRelative(String sourcePath) {
@@ -349,8 +351,7 @@ Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
     sourcePath = sourcePathToUri(p.absolute(p.fromUri(uri))).path;
 
     // Fall back to a relative path against the source map itself.
-    sourcePath =
-        p.url.relative(sourcePath, from: mapSourcesBase ?? sourceMapDir);
+    sourcePath = p.url.relative(sourcePath, from: sourceMapBase);
 
     // Convert from relative local path to relative URI.
     return p.toUri(sourcePath).path;

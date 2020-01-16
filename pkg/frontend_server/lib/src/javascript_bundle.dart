@@ -89,9 +89,9 @@ class JavaScriptBundler {
           summaryComponent, _summaries, _summaryUris, _moduleImportForSummary);
 
       final moduleUrl = urlForComponentUri(moduleUri);
-      String mapSourcesBase;
+      String sourceMapBase;
       if (moduleUri.scheme == 'package') {
-        mapSourcesBase =
+        sourceMapBase =
             p.dirname((await _packageResolver.resolveUri(moduleUri)).path);
       }
       final code = jsProgramToCode(
@@ -101,7 +101,7 @@ class JavaScriptBundler {
         buildSourceMap: true,
         jsUrl: '$moduleUrl.lib.js',
         mapUrl: '$moduleUrl.lib.js.map',
-        mapSourcesBase: mapSourcesBase,
+        sourceMapBase: sourceMapBase,
         customScheme: _fileSystemScheme,
         multiRootOutputPath: moduleUri.scheme == 'package'
             ? '/packages/${moduleUri.pathSegments.first}'
