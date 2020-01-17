@@ -68,7 +68,8 @@ class StrongComponents {
     // If we don't have a file uri, just use the first library in the
     // component.
     Library entrypoint = component.libraries.firstWhere(
-        (Library library) => library.fileUri == mainUri,
+        (Library library) =>
+            library.fileUri == mainUri || library.importUri == mainUri,
         orElse: () => null);
 
     if (entrypoint == null) {
