@@ -91,6 +91,9 @@ class JavaScriptBundler {
       final moduleUrl = urlForComponentUri(moduleUri);
       String sourceMapBase;
       if (moduleUri.scheme == 'package') {
+        // Source locations come through as absolute file uris. In order to
+        // make relative paths in the source map we get the absolute uri for
+        // the module and make them relative to that.
         sourceMapBase =
             p.dirname((await _packageResolver.resolveUri(moduleUri)).path);
       }
