@@ -11,7 +11,6 @@ import 'package:front_end/src/api_prototype/compiler_options.dart'
     show CompilerOptions;
 import 'package:front_end/src/compute_platform_binaries_location.dart';
 import 'package:front_end/src/fasta/incremental_serializer.dart';
-import 'package:frontend_server/src/expression_compiler.dart';
 import 'package:kernel/ast.dart' show Component;
 import 'package:kernel/target/targets.dart';
 import 'package:path/path.dart' as p;

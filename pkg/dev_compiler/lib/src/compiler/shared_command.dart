@@ -463,6 +463,14 @@ class ParsedArguments {
   /// See also [isBatchOrWorker].
   final bool isBatch;
 
+  /// Whether to run in `--experimental-expression-compiler` mode.
+  ///
+  /// This is a special mode that is optimized for only compiling expressions.
+  ///
+  /// All dependencies must come from precompiled dill files, and those must
+  /// be explicitly invalidated as needed between expression compile requests.
+  final bool isExpressionCompiler;
+
   /// Whether to run in `--bazel_worker` mode, e.g. for Bazel builds.
   ///
   /// Similar to [isBatch] but with a different protocol.
@@ -480,11 +488,14 @@ class ParsedArguments {
   /// Note that this only makes sense when also reusing results.
   final bool useIncrementalCompiler;
 
-  ParsedArguments._(this.rest,
-      {this.isBatch = false,
-      this.isWorker = false,
-      this.reuseResult = false,
-      this.useIncrementalCompiler = false});
+  ParsedArguments._(
+    this.rest, {
+    this.isBatch = false,
+    this.isWorker = false,
+    this.reuseResult = false,
+    this.useIncrementalCompiler = false,
+    this.isExpressionCompiler = false,
+  });
 
   /// Preprocess arguments to determine whether DDK is used in batch mode or as a
   /// persistent worker.
@@ -503,6 +514,7 @@ class ParsedArguments {
     var isBatch = false;
     var reuseResult = false;
     var useIncrementalCompiler = false;
+    var isExpressionCompiler = false;
 
     Iterable<String> argsToParse = args;
 
@@ -521,6 +533,8 @@ class ParsedArguments {
         reuseResult = true;
       } else if (arg == '--use-incremental-compiler') {
         useIncrementalCompiler = true;
+      } else if (arg == '--experimental-expression-compiler') {
+        isExpressionCompiler = true;
       } else {
         newArgs.add(arg);
       }
@@ -529,7 +543,8 @@ class ParsedArguments {
         isWorker: isWorker,
         isBatch: isBatch,
         reuseResult: reuseResult,
-        useIncrementalCompiler: useIncrementalCompiler);
+        useIncrementalCompiler: useIncrementalCompiler,
+        isExpressionCompiler: isExpressionCompiler);
   }
 
   /// Whether the compiler is running in [isBatch] or [isWorker] mode.
