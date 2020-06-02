@@ -429,7 +429,7 @@ error.name + ": " + error.message;
     // Errors are still correctly reported in the frontent_server,
     // but we end up doing unnesessary work below.
     // Add communication of error state from compiler here.
-    if (_compiler.context.errors.length > 0) {
+    if (_compiler.context.errors.isNotEmpty) {
       return null;
     }
 
