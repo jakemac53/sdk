@@ -124,11 +124,12 @@ class ExpressionCompilerWorker {
         var command = request['command'] as String;
         switch (command) {
           case 'UpdateDeps':
-            await _updateDeps(UpdateDepsRequest.fromJson(request));
+            sendResponse(
+                await _updateDeps(UpdateDepsRequest.fromJson(request)));
             break;
           case 'CompileExpression':
-            await _compileExpression(
-                CompileExpressionRequest.fromJson(request));
+            sendResponse(await _compileExpression(
+                CompileExpressionRequest.fromJson(request)));
             break;
           default:
             throw ArgumentError(
@@ -138,13 +139,15 @@ class ExpressionCompilerWorker {
         sendResponse({
           'exception': '$e',
           'stackTrace': '$s',
+          'succeeded': false,
         });
       }
     }
   }
 
   /// Handles a `CompileExpression` request.
-  Future<void> _compileExpression(CompileExpressionRequest request) async {
+  Future<Map<String, dynamic>> _compileExpression(
+      CompileExpressionRequest request) async {
     var errors = <String>[];
     var warnings = <String>[];
 
@@ -179,15 +182,16 @@ class ExpressionCompilerWorker {
         request.jsScope,
         moduleName,
         request.expression);
-    sendResponse({
+    return {
       'errors': errors,
       'warnings': warnings,
       'compiledProcedure': compiledProcedure,
-    });
+      'succeeded': errors.isEmpty,
+    };
   }
 
   /// Loads in the specified dill files and invalidates any existing ones.
-  Future<void> _updateDeps(UpdateDepsRequest request) async {
+  Future<Map<String, dynamic>> _updateDeps(UpdateDepsRequest request) async {
     for (var input in request.inputs) {
       var bytes = await File(input.path).readAsBytes();
       var component = await _processedOptions.loadComponent(
@@ -199,6 +203,7 @@ class ExpressionCompilerWorker {
         _componentForLibraryUri[lib.importUri.toString()] = component;
       }
     }
+    return {'succeeded': true};
   }
 }
 
