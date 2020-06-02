@@ -5,7 +5,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:args/args.dart';
 import 'package:build_integration/file_system/multi_root.dart';
@@ -40,7 +39,11 @@ class ExpressionCompilerWorker {
   ExpressionCompilerWorker._(this._processedOptions, this._sdkComponent,
       this.requestStream, this.sendResponse);
 
-  static Future<void> runFromArgs(List<String> args, {SendPort sendPort}) {
+  static Future<ExpressionCompilerWorker> createFromArgs(
+    List<String> args, {
+    Stream<Map<String, dynamic>> requestStream,
+    void Function(Map<String, dynamic>) sendResponse,
+  }) {
     // We are destructive on `args`, so make a copy.
     args = args.toList();
     var environmentDefines = parseAndRemoveDeclaredVariables(args);
@@ -55,7 +58,7 @@ class ExpressionCompilerWorker {
         parseExperimentalArguments(
             parsedArgs['enable-experiment'] as List<String>),
         onError: (e) => throw e);
-    return run(
+    return create(
       librariesSpecificationUri:
           _argToUri(parsedArgs['libraries-file'] as String),
       packagesFile: _argToUri(parsedArgs['packages-file'] as String),
@@ -64,13 +67,12 @@ class ExpressionCompilerWorker {
       environmentDefines: environmentDefines,
       experimentalFlags: experimentalFlags,
       sdkRoot: _argToUri(parsedArgs['sdk-root'] as String),
-      sendPort: sendPort,
       trackWidgetCreation: parsedArgs['track-widget-creation'] as bool,
       verbose: parsedArgs['verbose'] as bool,
     );
   }
 
-  static Future<void> run({
+  static Future<ExpressionCompilerWorker> create({
     @required Uri librariesSpecificationUri,
     @required Uri packagesFile,
     @required Uri sdkSummary,
@@ -78,9 +80,11 @@ class ExpressionCompilerWorker {
     Map<String, String> environmentDefines = const {},
     Map<ExperimentalFlag, bool> experimentalFlags = const {},
     Uri sdkRoot,
-    SendPort sendPort,
     bool trackWidgetCreation = false,
     bool verbose = false,
+    Stream<Map<String, dynamic>> requestStream, // Defaults to read from stdin
+    void Function(Map<String, dynamic>)
+        sendResponse, // Defaults to write to stdout
   }) async {
     var options = CompilerOptions()
       ..compileSdk = false
@@ -95,30 +99,22 @@ class ExpressionCompilerWorker {
       ..environmentDefines = environmentDefines
       ..experimentalFlags = experimentalFlags
       ..verbose = verbose;
-
-    Stream<Map<String, dynamic>> requestStream;
-    void Function(Map<String, dynamic>) sendResponse;
-    if (sendPort == null) {
-      requestStream = stdin
-          .transform(utf8.decoder.fuse(json.decoder))
-          .cast<Map<String, dynamic>>();
-      sendResponse = (Map<String, dynamic> response) =>
-          stdout.writeln(json.encode(response));
-    } else {
-      var recievePort = ReceivePort();
-      sendPort.send(recievePort);
-      requestStream = recievePort.cast<Map<String, dynamic>>();
-      sendResponse = sendPort.send;
-    }
+    requestStream ??= stdin
+        .transform(utf8.decoder.fuse(json.decoder))
+        .cast<Map<String, dynamic>>();
+    sendResponse ??= (Map<String, dynamic> response) =>
+        stdout.writeln(json.encode(response));
     var processedOpts = ProcessedOptions(options: options);
     var sdkComponent = await processedOpts.loadSdkSummary(null);
-    var worker = ExpressionCompilerWorker._(
+    return ExpressionCompilerWorker._(
         processedOpts, sdkComponent, requestStream, sendResponse);
-    await worker._start();
   }
 
   /// Starts listening and responding to commands.
-  Future<void> _start() async {
+  ///
+  /// Completes when the [requestStream] closes and we finish handling the
+  /// requests.
+  Future<void> start() async {
     await for (var request in requestStream) {
       try {
         var command = request['command'] as String;
@@ -151,15 +147,25 @@ class ExpressionCompilerWorker {
     var errors = <String>[];
     var warnings = <String>[];
 
-    var component = _componentForLibraryUri[request.libraryUri];
+    Component component;
+
+    if (request.libraryUri.startsWith('dart:')) {
+      component = _sdkComponent;
+    } else {
+      component = _componentForLibraryUri[request.libraryUri];
+    }
     if (component == null) {
       throw ArgumentError(
           'Unable to find library `${request.libraryUri}`, it must be loaded first.');
     }
 
     var moduleName = _componentModuleNames[component];
-    var incrementalCompiler = IncrementalCompiler.forExpressionCompilationOnly(
+    // var incrementalCompiler = IncrementalCompiler.forExpressionCompilationOnly(
+    //     CompilerContext(_processedOptions), component);
+    var incrementalCompiler = IncrementalCompiler.fromComponent(
         CompilerContext(_processedOptions), component);
+    await incrementalCompiler
+        .computeDelta(entryPoints: [Uri.parse(request.libraryUri)]);
     var compiler = ProgramCompiler(
       component,
       incrementalCompiler.getClassHierarchy(),

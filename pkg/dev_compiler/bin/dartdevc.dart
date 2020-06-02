@@ -30,8 +30,17 @@ Future main(List<String> args, [SendPort sendPort]) async {
   } else if (parsedArgs.isBatch) {
     await runBatch(parsedArgs);
   } else if (parsedArgs.isExpressionCompiler) {
-    await ExpressionCompilerWorker.runFromArgs(parsedArgs.rest,
-        sendPort: sendPort);
+    ExpressionCompilerWorker worker;
+    if (sendPort != null) {
+      var recievePort = ReceivePort();
+      sendPort.send(recievePort);
+      worker = await ExpressionCompilerWorker.createFromArgs(parsedArgs.rest,
+          requestStream: recievePort.cast<Map<String, dynamic>>(),
+          sendResponse: sendPort.send);
+    } else {
+      worker = await ExpressionCompilerWorker.createFromArgs(parsedArgs.rest);
+    }
+    await worker.start();
   } else {
     var result = await compile(parsedArgs);
     exitCode = result.exitCode;

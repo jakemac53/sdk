@@ -2933,7 +2933,7 @@ class ProgramCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
     // emit function with additional information,
     // such as types that are used in the expression
     var fun = _emitFunction(functionNode, name);
-    var items = _typeTable.discharge();
+    var items = _typeTable?.discharge() ?? [];
     var body = js_ast.Block([...items, ...fun.body.statements]);
 
     return js_ast.Fun(fun.params, body);
