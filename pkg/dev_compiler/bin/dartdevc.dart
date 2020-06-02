@@ -30,7 +30,8 @@ Future main(List<String> args, [SendPort sendPort]) async {
   } else if (parsedArgs.isBatch) {
     await runBatch(parsedArgs);
   } else if (parsedArgs.isExpressionCompiler) {
-    await ExpressionCompilerWorker.run(sendPort: sendPort);
+    await ExpressionCompilerWorker.runFromArgs(parsedArgs.rest,
+        sendPort: sendPort);
   } else {
     var result = await compile(parsedArgs);
     exitCode = result.exitCode;
