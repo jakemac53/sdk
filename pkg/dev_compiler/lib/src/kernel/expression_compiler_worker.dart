@@ -31,7 +31,7 @@ class ExpressionCompilerWorker {
   final void Function(Map<String, dynamic>) sendResponse;
 
   final _componentForLibrary = <Library, Component>{};
-  final _componentForLibraryUri = <String, Component>{};
+  final _componentForModuleName = <String, Component>{};
   final _componentModuleNames = <Component, String>{};
   final ProcessedOptions _processedOptions;
   final Component _sdkComponent;
@@ -152,14 +152,13 @@ class ExpressionCompilerWorker {
     if (request.libraryUri.startsWith('dart:')) {
       component = _sdkComponent;
     } else {
-      component = _componentForLibraryUri[request.libraryUri];
+      component = _componentForModuleName[request.moduleName];
     }
     if (component == null) {
       throw ArgumentError(
           'Unable to find library `${request.libraryUri}`, it must be loaded first.');
     }
 
-    var moduleName = _componentModuleNames[component];
     // var incrementalCompiler = IncrementalCompiler.forExpressionCompilationOnly(
     //     CompilerContext(_processedOptions), component);
     var incrementalCompiler = IncrementalCompiler.fromComponent(
@@ -170,7 +169,7 @@ class ExpressionCompilerWorker {
       component,
       incrementalCompiler.getClassHierarchy(),
       SharedCompilerOptions(
-          sourceMap: true, summarizeApi: false, moduleName: moduleName),
+          sourceMap: true, summarizeApi: false, moduleName: request.moduleName),
       _componentForLibrary,
       _componentModuleNames,
       coreTypes: incrementalCompiler.getCoreTypes(),
@@ -186,7 +185,7 @@ class ExpressionCompilerWorker {
         request.column,
         request.jsModules,
         request.jsScope,
-        moduleName,
+        request.moduleName,
         request.expression);
     return {
       'errors': errors,
@@ -204,9 +203,9 @@ class ExpressionCompilerWorker {
           bytes, _sdkComponent.root,
           alwaysCreateNewNamedNodes: true);
       _componentModuleNames[component] = input.moduleName;
+      _componentForModuleName[input.moduleName] = component;
       for (var lib in component.libraries) {
         _componentForLibrary[lib] = component;
-        _componentForLibraryUri[lib.importUri.toString()] = component;
       }
     }
     return {'succeeded': true};
@@ -220,6 +219,7 @@ class CompileExpressionRequest {
   final Map<String, String> jsScope;
   final String libraryUri;
   final int line;
+  final String moduleName;
 
   CompileExpressionRequest({
     @required this.expression,
@@ -228,6 +228,7 @@ class CompileExpressionRequest {
     @required this.jsScope,
     @required this.libraryUri,
     @required this.line,
+    @required this.moduleName,
   });
 
   factory CompileExpressionRequest.fromJson(Map<String, dynamic> json) =>
@@ -238,6 +239,7 @@ class CompileExpressionRequest {
         jsModules: Map<String, String>.from(json['jsModules'] as Map),
         jsScope: Map<String, String>.from(json['jsScope'] as Map),
         libraryUri: json['libraryUri'] as String,
+        moduleName: json['moduleName'] as String,
       );
 }
 

@@ -49,19 +49,20 @@ void main() async {
       'inputs': [
         {
           'path': asyncHelperDillPath,
-          'moduleName': 'asyncHelper',
+          'moduleName': 'packages/async_helper/async_helper',
         }
       ]
     });
 
     requestController.add({
       'command': 'CompileExpression',
-      'expression': '1 + 2', // String,
-      'line': 34, // int,
-      'column': 1, // int,
-      'jsModules': {}, // Map<String, String>,
-      'jsScope': {}, // Map<String, String>,
-      'libraryUri': 'package:async_helper/async_helper.dart', // String,
+      'expression': '1 + 2',
+      'line': 34,
+      'column': 1,
+      'jsModules': {},
+      'jsScope': {},
+      'libraryUri': 'package:async_helper/async_helper.dart',
+      'moduleName': 'packages/async_helper/async_helper',
     });
 
     expect(
