@@ -1,7 +1,9 @@
 {
   "version": 1,
   "experimentSets": {
-    "nullSafety": ["non-nullable"]
+    "nullSafety": [
+      "non-nullable"
+    ]
   },
   "sdk": {
     "default": {
@@ -15,6 +17,9 @@
   },
   "_example_packages": {
     "collection": {
+      "experimentSet": "nullSafety"
+    },
+    "js": {
       "experimentSet": "nullSafety"
     }
   }
