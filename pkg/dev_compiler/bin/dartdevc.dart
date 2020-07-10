@@ -33,7 +33,7 @@ Future main(List<String> args, [SendPort sendPort]) async {
     ExpressionCompilerWorker worker;
     if (sendPort != null) {
       var recievePort = ReceivePort();
-      sendPort.send(recievePort);
+      sendPort.send(recievePort.sendPort);
       worker = await ExpressionCompilerWorker.createFromArgs(parsedArgs.rest,
           requestStream: recievePort.cast<Map<String, dynamic>>(),
           sendResponse: sendPort.send);
