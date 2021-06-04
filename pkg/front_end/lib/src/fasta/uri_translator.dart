@@ -4,6 +4,8 @@
 
 library fasta.uri_translator;
 
+import 'dart:io';
+
 import 'package:package_config/package_config.dart';
 
 import '../base/libraries_specification.dart' show TargetLibrariesSpecification;
@@ -19,6 +21,14 @@ class UriTranslator {
 
   List<Uri>? getDartPatches(String libraryName) =>
       dartLibraries.libraryInfoFor(libraryName)?.patches;
+
+  List<Uri>? getPackagePatches(Uri libraryUri) {
+    Uri newUri = libraryUri.replace(path: libraryUri.path + '.patch');
+    if (new File.fromUri(newUri).existsSync()) {
+      return [newUri];
+    }
+    return null;
+  }
 
   bool isPlatformImplementation(Uri uri) {
     if (uri.scheme != "dart") return false;

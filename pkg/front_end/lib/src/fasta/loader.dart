@@ -240,7 +240,7 @@ abstract class Loader {
       if (target.backendTarget.mayDefineRestrictedType(libraryUri)) {
         library.mayImplementRestrictedTypes = true;
       }
-      if (uri.scheme == "dart") {
+      if (!library.isPatch) {
         target.readPatchFiles(library);
       }
       unparsedLibraries.addLast(library);

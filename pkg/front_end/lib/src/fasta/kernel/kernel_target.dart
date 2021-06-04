@@ -1325,7 +1325,13 @@ class KernelTarget extends TargetImplementation {
   @override
   void readPatchFiles(SourceLibraryBuilder library) {
     assert(library.importUri.scheme == "dart");
-    List<Uri> patches = uriTranslator.getDartPatches(library.importUri.path);
+    List<Uri> patches;
+    if (library.importUri.scheme == 'dart') {
+      patches = uriTranslator.getDartPatches(library.importUri.path);
+    } else if (library.fileUri.scheme == 'package' ||
+        library.fileUri.scheme == 'file') {
+      patches = uriTranslator.getPackagePatches(library.fileUri);
+    }
     if (patches != null) {
       SourceLibraryBuilder first;
       for (Uri patch in patches) {
