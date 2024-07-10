@@ -3,9 +3,10 @@ version: 6.7.0
 description: >-
   This package provides a library that performs static analysis of Dart code.
 repository: https://github.com/dart-lang/sdk/tree/main/pkg/analyzer
+resolution: workspace
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: ^3.5.0
 
 dependencies:
   _fe_analyzer_shared: ^72.0.0
@@ -38,15 +39,3 @@ dev_dependencies:
   test: any
   test_reflective_loader: any
   vm_service: any
-
-dependency_overrides:
-  _fe_analyzer_shared:
-    path: ../_fe_analyzer_shared
-  analyzer_utilities:
-    path: ../analyzer_utilities
-  heap_snapshot:
-    path: ../heap_snapshot
-  linter:
-    path: ../linter
-  vm_service:
-    path: ../vm_service

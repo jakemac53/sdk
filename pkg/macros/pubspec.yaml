@@ -4,9 +4,10 @@ description: >-
   This package is for macro authors, and exposes the APIs necessary to write
   a macro. It exports the APIs from the private `_macros` SDK vendored package.
 repository: https://github.com/dart-lang/sdk/tree/main/pkg/macros
+resolution: workspace
 
 environment:
-  sdk: ^3.4.0-256.0.dev
+  sdk: ^3.5.0
 
 dependencies:
   _macros:

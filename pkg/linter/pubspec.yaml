@@ -1,13 +1,14 @@
 name: linter
 # This package is not intended for consumption on pub.dev. DO NOT publish.
 publish_to: none
+resolution: workspace
 
 description: >-
   The implementation of the lint rules supported by the analyzer framework.
   This package is not intended to be used directly.
 
 environment:
-  sdk: ^3.3.0
+  sdk: ^3.5.0
 
 # Use 'any' constraints here; we get our versions from the DEPS file.
 dependencies:

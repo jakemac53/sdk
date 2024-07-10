@@ -35,6 +35,8 @@ vars = {
   # DO NOT use this var if you don't see a mirror here:
   #   https://dart.googlesource.com/
   "dart_git": "https://dart.googlesource.com/",
+  # DO NOT LAND: Should be mirrored instead
+  "dart_github": "https://github.com/dart-lang/",
   "dart_internal_git": "https://dart-internal.googlesource.com",
   # If the repo you want to use is at github.com/dart-lang, but not at
   # dart.googlesource.com, please file an issue
@@ -131,6 +133,7 @@ vars = {
   "clock_rev": "ad428ea8b75fa0d7ba629791552d40478745c54a",
   "collection_rev": "0c1f829c29da1d63488be774f430b2035a565d6f",
   "convert_rev": "9035cafefc1da4315f26058734d0c2a19d5ab56a",
+  "coverage_rev": "044b7a27aecc183f204b25dd74c23d911343f9fb",
   "crypto_rev": "1216790ba704a0ab194f9cd0da2d65e1767f3342",
   "csslib_rev": "192d720f121792ab05ca157ea280edc7e0410e9c",
   # Note: Updates to dart_style have to be coordinated with the infrastructure
@@ -155,6 +158,7 @@ vars = {
   "http_multi_server_rev": "8348be1bf8fd17881e2643086e68c9d2b28dd9ce",
   "http_parser_rev": "ce528cf82f3d26ac761e29b2494a9e0c270d4939",
   "intl_rev": "5d65e3808ce40e6282e40881492607df4e35669f",
+  "io_rev": "416654e7bb4f434e5971836bb86d6280490a018d",
   "json_rpc_2_rev": "b4810dc7bee5828f240586c81f3f34853cacdbce",
   "leak_tracker_rev": "f5620600a5ce1c44f65ddaa02001e200b096e14c", # manually rolled
   "lints_rev": "f6b5d36485f6f067ac0f5a7193006ebe82ee6113",
@@ -408,6 +412,8 @@ deps = {
       Var("dart_git") + "collection.git" + "@" + Var("collection_rev"),
   Var("dart_root") + "/third_party/pkg/convert":
       Var("dart_git") + "convert.git" + "@" + Var("convert_rev"),
+  Var("dart_root") + "/third_party/pkg/coverage":
+      Var("dart_github") + "coverage.git" + "@" + Var("coverage_rev"),
   Var("dart_root") + "/third_party/pkg/crypto":
       Var("dart_git") + "crypto.git" + "@" + Var("crypto_rev"),
   Var("dart_root") + "/third_party/pkg/csslib":
@@ -440,6 +446,8 @@ deps = {
       Var("dart_git") + "http_parser.git" + "@" + Var("http_parser_rev"),
   Var("dart_root") + "/third_party/pkg/intl":
       Var("dart_git") + "intl.git" + "@" + Var("intl_rev"),
+  Var("dart_root") + "/third_party/pkg/io":
+      Var("dart_github") + "io.git" + "@" + Var("io_rev"),
   Var("dart_root") + "/third_party/pkg/json_rpc_2":
       Var("dart_git") + "json_rpc_2.git" + "@" + Var("json_rpc_2_rev"),
   Var("dart_root") + "/third_party/pkg/leak_tracker":
