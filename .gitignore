@@ -84,8 +84,11 @@ pubspec.lock
 # The top level package file (this is auto-generated per checkout).
 /.dart_tool/package_config.json
 
-# The local pub cache
+# The local pub cache for executables and such.
 /.dart_tool/pub/
+
+# Custom pub package cache used for the SDK.
+/.dart_tool/sdk_pub_cache/
 
 # Local pub storage
 .pub

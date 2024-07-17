@@ -29,3 +29,5 @@
 !/pkg/dap/*
 !/pkg/language_server_protocol
 !/pkg/language_server_protocol/*
+!/pkg/node_preamble
+!/pkg/node_preamble/*

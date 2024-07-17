@@ -1,0 +1,4 @@
+# Placeholder for the real node preamble package, which we don't pull into the
+# SDK.
+name: node_preamble
+version: 2.0.0

@@ -38,7 +38,14 @@ def generate_package_config():
         'pub',
         'get',
         '--offline'
-    ], cwd = sdk_dir)
+    ], cwd = sdk_dir, env = {
+        # Putting a fake pub hosted url enforces that we never reach out to pub.
+        "PUB_HOSTED_URL": "http://fake/pub",
+        # Use a custom pub cache for the SDK. Technically this should never be
+        # created, but otherwise in offline mode pub might find packages a user
+        # has previously downloaded.
+        "PUB_CACHE": os.path.join(sdk_dir, ".dart_tool/sdk_pub_cache")
+    })
     return process.returncode
 
 

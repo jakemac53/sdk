@@ -61,9 +61,8 @@ dependency_overrides:
     path: third_party/pkg/matcher
   mime:
     path: third_party/pkg/mime
-  # TODO: Figure out a solution, this isn't google owned.
-  # node_preamble:
-  #   path: third_party/pkg/node_preamble
+  node_preamble:
+    path: third_party/pkg/node_preamble
   package_config:
     path: third_party/pkg/package_config
   path:
