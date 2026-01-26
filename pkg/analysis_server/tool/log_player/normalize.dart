@@ -111,6 +111,8 @@ String normalizeLog(File input, PackageConfig packageCofig) {
   // Next, replace the dart sdk path
   content = content.replaceAll(sdkPath, '{{dartSdkRoot}}');
 
+  // TODO(somebody): Replace the flutter SDK path with {{flutterSdkRoot}}.
+
   // Finally, replace the package roots
   for (var package in packageCofig.packages) {
     content = content.replaceAll(
