@@ -68,7 +68,7 @@ Future<int> runMultiplexer() async {
     return 255;
   }
 
-  final serverProcess = await Process.start(Platform.executable, [script, '--protocol=lsp']);
+  final serverProcess = await Process.start(sdk.dartAotRuntime, [script, '--protocol=lsp']);
   stderr.writeln('Spawned real analysis server (PID: ${serverProcess.pid})');
 
   // Handle server exit
@@ -468,6 +468,7 @@ Future<int> runClientProxy(ArgResults argResults) async {
 
   if (ownsLock) {
     raf?.closeSync(); // Release lock so detached process can get it.
+    file.writeAsStringSync(''); // Truncate file so polling loop waits for new content.
 
     // Spawn detached multiplexer
     final dartPath = Platform.executable;
@@ -507,17 +508,32 @@ Future<int> runClientProxy(ArgResults argResults) async {
       return 255;
     }
 
-    final socket = await Socket.connect('localhost', port);
+    Socket? socket;
+    int connectAttempts = 0;
+    while (connectAttempts < 20) {
+      try {
+        socket = await Socket.connect('localhost', port);
+        break;
+      } catch (e) {
+        connectAttempts++;
+        if (connectAttempts >= 20) {
+          stderr.writeln('Error: Failed to connect to multiplexer: $e');
+          return 255;
+        }
+        await Future.delayed(Duration(milliseconds: 200));
+      }
+    }
 
     // Pipe stdin to socket and socket to stdout
     // Note: pipe closes the destination by default.
     // For a proxy, we might need to handle streams manually to keep them open or handle close correctly.
     // But for a simple proxy, pipe might be okay if the server closes the socket when done.
     // Let's use a simple pipe for now.
-    stdin.listen((data) => socket.add(data), onDone: () => socket.close());
-    socket.listen((data) => stdout.add(data), onDone: () => exit(0));
+    final s = socket!;
+    stdin.listen((data) => s.add(data), onDone: () => s.close());
+    s.listen((data) => stdout.add(data), onDone: () => exit(0));
 
-    await socket.done;
+    await s.done;
     return 0;
   } catch (e) {
     stderr.writeln('Error: Failed to connect to multiplexer: $e');
