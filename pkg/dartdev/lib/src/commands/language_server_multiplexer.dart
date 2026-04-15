@@ -104,6 +104,7 @@ class Multiplexer {
 
   final Map<Socket, Set<String>> _clientWorkspaces = {};
   Set<String> _currentServerWorkspaces = {};
+  final Map<Socket, Map<String, dynamic>> _clientCapabilities = {};
 
   Multiplexer(this._serverProcess) {
     _serverProcess.stdout
@@ -140,6 +141,16 @@ class Multiplexer {
         message['id'] = pending.clientId;
         pending.client.write(formatLspMessage(jsonEncode(message)));
       }
+    } else if (message.containsKey('id') && message.containsKey('method')) {
+      // Request from server to client
+      final method = message['method'];
+      stderr.writeln('Received request from server: $method');
+
+      // TODO: Implement proper routing and ID mapping for server requests.
+      // For now, route to the first client as a fallback.
+      if (_clients.isNotEmpty) {
+        _clients.first.write(formatLspMessage(messagePayload));
+      }
     } else {
       for (final client in _clients) {
         client.write(formatLspMessage(messagePayload));
@@ -161,6 +172,11 @@ class Multiplexer {
           final folders = workspaceFolders.map((f) => f['uri'] as String).toSet();
           _clientWorkspaces[client] = folders;
           _updateServerWorkspaces();
+        }
+
+        final capabilities = params?['capabilities'] as Map<String, dynamic>?;
+        if (capabilities != null) {
+          _clientCapabilities[client] = capabilities;
         }
 
         if (_isServerInitialized) {
