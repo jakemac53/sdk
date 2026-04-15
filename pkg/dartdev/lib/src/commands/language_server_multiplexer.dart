@@ -108,6 +108,8 @@ class Multiplexer {
   final Map<Socket, Set<String>> _clientOpenFiles = {};
   final Map<String, dynamic> _pendingServerRequests = {};
   int _serverRequestIdCounter = 0;
+  Timer? _shutdownTimer;
+  static const Duration _shutdownTimeout = Duration(seconds: 60);
 
   Multiplexer(this._serverProcess) {
     _serverProcess.stdout
@@ -118,6 +120,14 @@ class Multiplexer {
 
   void addClient(Socket socket) {
     _clients.add(socket);
+    stderr.writeln('New client connected');
+
+    if (_shutdownTimer != null) {
+      stderr.writeln('Cancelling shutdown timer');
+      _shutdownTimer!.cancel();
+      _shutdownTimer = null;
+    }
+
     socket
         .cast<List<int>>()
         .transform(LspPacketTransformer())
@@ -126,8 +136,18 @@ class Multiplexer {
         }, onDone: () {
           _clients.remove(socket);
           _clientWorkspaces.remove(socket);
+          _clientOpenFiles.remove(socket);
           _updateServerWorkspaces();
           stderr.writeln('Client disconnected');
+
+          if (_clients.isEmpty) {
+            stderr.writeln('All clients disconnected. Starting shutdown timer...');
+            _shutdownTimer = Timer(_shutdownTimeout, () {
+              stderr.writeln('Shutdown timeout reached. Shutting down server...');
+              _serverProcess.kill();
+              exit(0);
+            });
+          }
         });
   }
 
