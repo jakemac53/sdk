@@ -367,20 +367,20 @@ class Multiplexer {
     if (registrations == null) return;
 
     final supportingClients = <Socket>{};
+    final clientRegistrations = <Socket, List<dynamic>>{};
+
     for (final client in _clients) {
       final clientCaps = _clientCapabilities[client];
       if (clientCaps == null) continue;
 
-      bool allSupported = true;
-      for (final reg in registrations) {
+      final supported = registrations.where((reg) {
         final method = reg['method'] as String;
-        if (!_clientSupportsFeature(clientCaps, method)) {
-          allSupported = false;
-          break;
-        }
-      }
-      if (allSupported) {
+        return _clientSupportsFeature(clientCaps, method);
+      }).toList();
+
+      if (supported.isNotEmpty) {
         supportingClients.add(client);
+        clientRegistrations[client] = supported;
       }
     }
 
@@ -391,18 +391,22 @@ class Multiplexer {
         final clientId = 'srv_req_${_serverRequestIdCounter++}';
         _pendingServerRequests[clientId] = pendingRequest;
 
-        final clientMessage = Map<String, dynamic>.from(message);
-        clientMessage['id'] = clientId;
+        final clientMessage = {
+          'jsonrpc': '2.0',
+          'id': clientId,
+          'method': 'client/registerCapability',
+          'params': {'registrations': clientRegistrations[client]}
+        };
         client.write(formatLspMessage(jsonEncode(clientMessage)));
       }
     } else {
-      stderr.writeln('No client supports all requested capabilities: $registrations');
+      stderr.writeln('No client supports any of the requested capabilities: $registrations');
       final response = {
         'jsonrpc': '2.0',
         'id': serverId,
         'error': {
           'code': -32601,
-          'message': 'No client supports all requested capabilities'
+          'message': 'No client supports any of the requested capabilities'
         }
       };
       _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
