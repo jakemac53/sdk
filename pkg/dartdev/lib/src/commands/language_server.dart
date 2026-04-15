@@ -10,7 +10,7 @@ import 'package:args/args.dart';
 import '../core.dart';
 import '../sdk.dart';
 import '../utils.dart';
-import '../vm_interop_handler.dart';
+import 'language_server_multiplexer.dart';
 
 class LanguageServerCommand extends DartdevCommand {
   static const String commandName = 'language-server';
@@ -43,46 +43,19 @@ For more information about the server's capabilities and configuration, see:
       help: 'Use the AOT analysis server snapshot',
       defaultsTo: true,
       hide: true,
+    )..addFlag(
+      'multiplexer',
+      help: 'Run the analysis server multiplexer',
+      defaultsTo: false,
+      hide: true,
     );
   }
 
   @override
   Future<int> run() async {
-    const protocol = server.Driver.serverProtocolOption;
-    const lsp = server.Driver.protocolLsp;
-
-    var args = argResults!.arguments;
-    if (!argResults!.wasParsed(protocol)) {
-      args = [...args, '--$protocol=$lsp'];
+    if (argResults!['multiplexer'] as bool? ?? false) {
+      return runMultiplexer();
     }
-    try {
-      var script = sdk.analysisServerAotSnapshot;
-      var useExec = false;
-      if (argResults!.flag(useAotSnapshotFlag)) {
-        if (!checkArtifactExists(sdk.analysisServerAotSnapshot)) {
-          log.stderr('Error: launching language analysis server failed');
-          log.stderr('${sdk.analysisServerAotSnapshot} not found');
-          return _genericErrorExitCode;
-        }
-        args = [...args];
-        args.remove('--$useAotSnapshotFlag');
-      } else {
-        args = [...args];
-        args.remove('--no-$useAotSnapshotFlag');
-        script = sdk.analysisServerSnapshot;
-        useExec = true;
-      }
-      VmInteropHandler.run(script, args, useExecProcess: useExec);
-      return 0;
-    } catch (e, st) {
-      log.stderr('Error: launching language analysis server failed');
-      log.stderr(e.toString());
-      if (verbose) {
-        log.stderr(st.toString());
-      }
-      return _genericErrorExitCode;
-    }
+    return runClientProxy(argResults!);
   }
-
-  static const _genericErrorExitCode = 255;
 }
