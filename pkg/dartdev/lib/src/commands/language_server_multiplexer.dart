@@ -186,6 +186,39 @@ class Multiplexer {
     } else {
       // Notification from server to client
       final method = message['method'];
+
+      // Synthesize $/analyzerStatus from $/progress if needed (if the client
+      // doesn't support LSP progress messages).
+      if (method == r'$/progress') {
+        final params = message['params'] as Map<String, dynamic>?;
+        if (params?['token'] == 'ANALYZING') {
+          final value = params?['value'] as Map<String, dynamic>?;
+          final kind = value?['kind'] as String?;
+          bool? isAnalyzing;
+          if (kind == 'begin') {
+            isAnalyzing = true;
+          } else if (kind == 'end') {
+            isAnalyzing = false;
+          }
+          if (isAnalyzing != null) {
+            final statusMessage = {
+              'jsonrpc': '2.0',
+              'method': r'$/analyzerStatus',
+              'params': {'isAnalyzing': isAnalyzing},
+            };
+            final statusPayload = formatLspMessage(jsonEncode(statusMessage));
+            for (final client in _clients) {
+              final capabilities = _clientCapabilities[client];
+              final window = capabilities?['window'] as Map<String, dynamic>?;
+              final supportsProgress = window?['workDoneProgress'] == true;
+              if (!supportsProgress) {
+                client.write(statusPayload);
+              }
+            }
+          }
+        }
+      }
+
       if (method == 'textDocument/publishDiagnostics') {
         final params = message['params'] as Map<String, dynamic>?;
         final uri = params?['uri'] as String?;

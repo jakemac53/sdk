@@ -87,7 +87,7 @@ When dealing with clients of varying capabilities, the Multiplexer has a few opt
 2.  **Union with Translation (Complex)**: The Multiplexer exposes the union of all capabilities to the server. For clients, it exposes what they support.
     *   If Client A supports `textDocument/formatting` and Client B does not, the Multiplexer routes formatting requests from Client A to the server, but never expects them from Client B.
     *   If the server sends a notification that only Client A supports, the Multiplexer only sends it to Client A.
-3.  **Dynamic Capabilities**: Use LSP's dynamic capability registration feature (`client/registerCapability` and `client/unregisterCapability`). This allows the Multiplexer to tell the server to enable/disable features as clients with different capabilities come and go. This is the most robust solution but requires good support for dynamic registration in the server and clients.
+3.  **Dynamic Capabilities (Implemented)**: We use a custom protocol extension `server/registerCapability` (sent from Multiplexer to Server). When a new client connects with capabilities not yet supported by the server, the Multiplexer dynamically registers these capabilities with the server. This allows the server to lazily enable features as needed by connected clients.
 
 ### 3. Diagnostics and Notifications
 
@@ -96,6 +96,7 @@ When dealing with clients of varying capabilities, the Multiplexer has a few opt
 **Proposed Solution**:
 - The Multiplexer must track which clients have which files open (via `textDocument/didOpen` and `textDocument/didClose`).
 - When the server sends `textDocument/publishDiagnostics` for a file, the Multiplexer routes it only to clients that are currently interested in that file or its enclosing workspace folder.
+- **Progress and Status Translation**: The server sends `$/progress` notifications if the client supports `workDoneProgress`, and falls back to `$/analyzerStatus` otherwise. If the Multiplexer receives `$/progress` for analysis (token `'ANALYZING'`), it synthesizes `$/analyzerStatus` notifications for clients that do not support `workDoneProgress` to ensure they don't hang waiting for analysis completion.
 
 ### 4. Lifecycle Management
 
