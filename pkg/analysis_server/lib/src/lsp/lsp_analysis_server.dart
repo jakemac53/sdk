@@ -126,6 +126,9 @@ class LspAnalysisServer extends AnalysisServer {
   /// imports was modified, etc).
   final Set<String> _filesWithClientDiagnostics = {};
 
+  /// Capabilities that have been dynamically registered by the client/multiplexer.
+  final Set<String> activeDynamicCapabilities = {};
+
   /// A completer for [lspInitialized].
   final Completer<InitializedStateMessageHandler> _lspInitializedCompleter =
       Completer<InitializedStateMessageHandler>();
@@ -434,6 +437,15 @@ class LspAnalysisServer extends AnalysisServer {
           params: params,
           jsonrpc: jsonRpcVersion,
         ),
+      );
+    }
+  }
+
+  void registerCapabilities(List<Registration> registrations) {
+    for (var reg in registrations) {
+      activeDynamicCapabilities.add(reg.method);
+      instrumentationService.logInfo(
+        'Dynamically registered capability: ${reg.method}',
       );
     }
   }

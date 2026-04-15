@@ -248,6 +248,32 @@ class Multiplexer {
             'result': _initializeResult
           };
           client.write(formatLspMessage(jsonEncode(response)));
+
+          // Check for new capabilities to register with the server.
+          final newRegistrations = <Map<String, dynamic>>[];
+          capabilities?.forEach((section, features) {
+            if (features is! Map<String, dynamic>) return;
+
+            features.forEach((feature, value) {
+              if (value == true || value is Map) {
+                if (!_anyOtherClientSupports(client, section, feature)) {
+                  newRegistrations.add({
+                    'id': 'mux_reg_${_requestIdCounter++}',
+                    'method': '$section/$feature',
+                  });
+                }
+              }
+            });
+          });
+
+          if (newRegistrations.isNotEmpty) {
+            final regMessage = {
+              'jsonrpc': '2.0',
+              'method': 'server/registerCapability',
+              'params': {'registrations': newRegistrations}
+            };
+            _serverProcess.stdin.write(formatLspMessage(jsonEncode(regMessage)));
+          }
           return;
         } else {
           _initialInitializeRequestId = 'req_${_requestIdCounter++}';
@@ -429,6 +455,19 @@ class Multiplexer {
     if (featureMap is bool) return featureMap;
     if (featureMap is Map) return true;
 
+    return false;
+  }
+
+  bool _anyOtherClientSupports(Socket currentClient, String section, String feature) {
+    for (final client in _clients) {
+      if (client == currentClient) continue;
+      final caps = _clientCapabilities[client];
+      if (caps == null) continue;
+      final sec = caps[section] as Map<String, dynamic>?;
+      if (sec == null) continue;
+      final feat = sec[feature];
+      if (feat == true || feat is Map) return true;
+    }
     return false;
   }
 }

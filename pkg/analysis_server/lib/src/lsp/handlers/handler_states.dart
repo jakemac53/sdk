@@ -18,6 +18,7 @@ import 'package:analysis_server/src/lsp/handlers/custom/handler_experimental_ech
 import 'package:analysis_server/src/lsp/handlers/custom/handler_get_widget_previews.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/handler_imports.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/handler_reanalyze.dart';
+import 'package:analysis_server/src/lsp/handlers/custom/handler_server_register_capability.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/handler_summary.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/handler_super.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/handler_update_diagnostic_information.dart';
@@ -103,6 +104,7 @@ class InitializedLspStateMessageHandler extends InitializedStateMessageHandler {
         SemanticTokensFullHandler.new,
         SemanticTokensRangeHandler.new,
         InlayHintHandler.new,
+        ServerRegisterCapabilityHandler.new,
       ];
 
   InitializedLspStateMessageHandler(LspAnalysisServer server) : super(server) {

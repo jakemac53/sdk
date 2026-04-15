@@ -162,6 +162,7 @@ abstract final class CustomMethods {
     'dart/workspace/getFlutterWidgetPreviews',
   );
   static const summary = Method('dart/textDocument/summary');
+  static const registerCapability = Method('server/registerCapability');
   static const super_ = Method('dart/textDocument/super');
   static const imports = Method('dart/textDocument/imports');
 
