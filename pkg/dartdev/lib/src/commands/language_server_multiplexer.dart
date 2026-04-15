@@ -105,6 +105,8 @@ class Multiplexer {
   final Map<Socket, Set<String>> _clientWorkspaces = {};
   Set<String> _currentServerWorkspaces = {};
   final Map<Socket, Map<String, dynamic>> _clientCapabilities = {};
+  final Map<String, dynamic> _pendingServerRequests = {};
+  int _serverRequestIdCounter = 0;
 
   Multiplexer(this._serverProcess) {
     _serverProcess.stdout
@@ -143,13 +145,22 @@ class Multiplexer {
       }
     } else if (message.containsKey('id') && message.containsKey('method')) {
       // Request from server to client
+      final serverId = message['id'];
       final method = message['method'];
       stderr.writeln('Received request from server: $method');
 
-      // TODO: Implement proper routing and ID mapping for server requests.
+      if (method == 'client/registerCapability') {
+        _handleRegisterCapability(message);
+        return;
+      }
+
       // For now, route to the first client as a fallback.
       if (_clients.isNotEmpty) {
-        _clients.first.write(formatLspMessage(messagePayload));
+        final client = _clients.first;
+        final clientId = 'srv_req_${_serverRequestIdCounter++}';
+        _pendingServerRequests[clientId] = serverId;
+        message['id'] = clientId;
+        client.write(formatLspMessage(jsonEncode(message)));
       }
     } else {
       for (final client in _clients) {
@@ -200,6 +211,51 @@ class Multiplexer {
       _pendingRequests[serverId] = _PendingRequest(client, clientId);
       message['id'] = serverId;
       _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
+    } else if (message.containsKey('id') && !message.containsKey('method')) {
+      // Response from client to server
+      final clientId = message['id'];
+      final pending = _pendingServerRequests[clientId];
+
+      if (pending is _PendingServerRequest) {
+        _pendingServerRequests.remove(clientId);
+        pending.pendingClients.remove(client);
+
+        final error = message['error'];
+        if (error == null) {
+          // Success!
+          if (!pending.succeeded) {
+            pending.succeeded = true;
+            // Send success to server
+            final response = {
+              'jsonrpc': '2.0',
+              'id': pending.serverId,
+              'result': null
+            };
+            _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+          }
+        }
+
+        // If all clients responded and none succeeded, send error to server
+        if (pending.pendingClients.isEmpty && !pending.succeeded) {
+          final response = {
+            'jsonrpc': '2.0',
+            'id': pending.serverId,
+            'error': {
+              'code': -32603,
+              'message': 'All clients failed to register capability'
+            }
+          };
+          _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+        }
+
+        return;
+      }
+
+      final serverId = _pendingServerRequests.remove(clientId);
+      if (serverId != null) {
+        message['id'] = serverId;
+        _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
+      }
     } else {
       if (message['method'] == 'initialized') {
         if (_isServerInitialized) {
@@ -237,12 +293,87 @@ class Multiplexer {
       _currentServerWorkspaces = allFolders;
     }
   }
+
+  void _handleRegisterCapability(Map<String, dynamic> message) {
+    final serverId = message['id'];
+    final params = message['params'] as Map<String, dynamic>?;
+    final registrations = params?['registrations'] as List<dynamic>?;
+    if (registrations == null) return;
+
+    final supportingClients = <Socket>{};
+    for (final client in _clients) {
+      final clientCaps = _clientCapabilities[client];
+      if (clientCaps == null) continue;
+
+      bool allSupported = true;
+      for (final reg in registrations) {
+        final method = reg['method'] as String;
+        if (!_clientSupportsFeature(clientCaps, method)) {
+          allSupported = false;
+          break;
+        }
+      }
+      if (allSupported) {
+        supportingClients.add(client);
+      }
+    }
+
+    if (supportingClients.isNotEmpty) {
+      final pendingRequest = _PendingServerRequest(serverId, Set.from(supportingClients));
+
+      for (final client in supportingClients) {
+        final clientId = 'srv_req_${_serverRequestIdCounter++}';
+        _pendingServerRequests[clientId] = pendingRequest;
+
+        final clientMessage = Map<String, dynamic>.from(message);
+        clientMessage['id'] = clientId;
+        client.write(formatLspMessage(jsonEncode(clientMessage)));
+      }
+    } else {
+      stderr.writeln('No client supports all requested capabilities: $registrations');
+      final response = {
+        'jsonrpc': '2.0',
+        'id': serverId,
+        'error': {
+          'code': -32601,
+          'message': 'No client supports all requested capabilities'
+        }
+      };
+      _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+    }
+  }
+
+  bool _clientSupportsFeature(Map<String, dynamic> capabilities, String method) {
+    final parts = method.split('/');
+    if (parts.length != 2) return false;
+
+    final section = parts[0];
+    final feature = parts[1];
+
+    final sectionMap = capabilities[section] as Map<String, dynamic>?;
+    if (sectionMap == null) return false;
+
+    final featureMap = sectionMap[feature];
+    if (featureMap == null) return false;
+
+    if (featureMap is bool) return featureMap;
+    if (featureMap is Map) return true;
+
+    return false;
+  }
 }
 
 class _PendingRequest {
   final Socket client;
   final dynamic clientId;
   _PendingRequest(this.client, this.clientId);
+}
+
+class _PendingServerRequest {
+  final dynamic serverId;
+  final Set<Socket> pendingClients;
+  bool succeeded = false;
+  _PendingServerRequest(this.serverId, this.pendingClients);
 }
 
 String formatLspMessage(String jsonPayload) {
