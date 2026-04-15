@@ -105,6 +105,7 @@ class Multiplexer {
   final Map<Socket, Set<String>> _clientWorkspaces = {};
   Set<String> _currentServerWorkspaces = {};
   final Map<Socket, Map<String, dynamic>> _clientCapabilities = {};
+  final Map<Socket, Set<String>> _clientOpenFiles = {};
   final Map<String, dynamic> _pendingServerRequests = {};
   int _serverRequestIdCounter = 0;
 
@@ -163,6 +164,36 @@ class Multiplexer {
         client.write(formatLspMessage(jsonEncode(message)));
       }
     } else {
+      // Notification from server to client
+      final method = message['method'];
+      if (method == 'textDocument/publishDiagnostics') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final uri = params?['uri'] as String?;
+        if (uri != null) {
+          for (final client in _clients) {
+            // Check if client has file open
+            final openFiles = _clientOpenFiles[client];
+            if (openFiles != null && openFiles.contains(uri)) {
+              client.write(formatLspMessage(messagePayload));
+              continue;
+            }
+
+            // Check if file is in client's workspace
+            final workspaces = _clientWorkspaces[client];
+            if (workspaces != null) {
+              for (final workspaceUri in workspaces) {
+                if (uri.startsWith(workspaceUri)) {
+                  client.write(formatLspMessage(messagePayload));
+                  break; // Found match for this client
+                }
+              }
+            }
+          }
+          return; // Handled
+        }
+      }
+
+      // Fallback: broadcast other notifications
       for (final client in _clients) {
         client.write(formatLspMessage(messagePayload));
       }
@@ -257,11 +288,26 @@ class Multiplexer {
         _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
       }
     } else {
-      if (message['method'] == 'initialized') {
+      final method = message['method'];
+      if (method == 'initialized') {
         if (_isServerInitialized) {
           return;
         }
         _isServerInitialized = true;
+      } else if (method == 'textDocument/didOpen') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final textDocument = params?['textDocument'] as Map<String, dynamic>?;
+        final uri = textDocument?['uri'] as String?;
+        if (uri != null) {
+          _clientOpenFiles.putIfAbsent(client, () => {}).add(uri);
+        }
+      } else if (method == 'textDocument/didClose') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final textDocument = params?['textDocument'] as Map<String, dynamic>?;
+        final uri = textDocument?['uri'] as String?;
+        if (uri != null) {
+          _clientOpenFiles[client]?.remove(uri);
+        }
       }
       _serverProcess.stdin.write(formatLspMessage(messagePayload));
     }
