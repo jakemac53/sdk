@@ -253,10 +253,11 @@ class Multiplexer {
     }
   }
 
-  void _handleClientMessage(Socket client, String messagePayload) {
+  void _handleClientMessage(Socket client, String messagePayload) async {
     final message = jsonDecode(messagePayload) as Map<String, dynamic>;
 
     if (message.containsKey('id') && message.containsKey('method')) {
+      // Message from client to server
       final clientId = message['id'];
       final method = message['method'];
 
@@ -315,6 +316,12 @@ class Multiplexer {
           _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
           return;
         }
+      } else if (method == 'shutdown') {
+        // Don't actually forward these, just close the socket after sending a response;
+        client.write(formatLspMessage(jsonEncode({'jsonrpc': '2.0', 'id': clientId, 'result': null})));
+        await client.flush();
+        client.close();
+        return;
       }
 
       final serverId = 'req_${_requestIdCounter++}';
@@ -367,6 +374,7 @@ class Multiplexer {
         _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
       }
     } else {
+      // Notifications
       final method = message['method'];
       if (method == 'initialized') {
         if (_isServerInitialized) {
@@ -387,6 +395,11 @@ class Multiplexer {
         if (uri != null) {
           _clientOpenFiles[client]?.remove(uri);
         }
+      } else if (method == 'exit') {
+        // Close the socket and return, do not send exit message to the actual
+        // server.
+        client.close();
+        return;
       }
       _serverProcess.stdin.write(formatLspMessage(messagePayload));
     }

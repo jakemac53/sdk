@@ -17,6 +17,7 @@ import '../core.dart';
 import '../experiments.dart';
 import '../sdk.dart';
 import '../utils.dart';
+import 'language_server_multiplexer.dart';
 
 class AnalyzeCommand extends DartdevCommand {
   static const String cmdName = 'analyze';
@@ -202,6 +203,21 @@ class AnalyzeCommand extends DartdevCommand {
         ? null
         : log.progress('Analyzing $targetsNames');
 
+    io.Socket? socket;
+    final discoveryFile = io.File(getDiscoveryFilePath());
+    if (discoveryFile.existsSync()) {
+      try {
+        final content = discoveryFile.readAsStringSync();
+        final port = int.tryParse(content.trim());
+        if (port != null) {
+          socket = await io.Socket.connect('localhost', port);
+          log.trace('Connected to shared analysis server multiplexer.');
+        }
+      } catch (e) {
+        log.trace('Failed to connect to multiplexer: $e');
+      }
+    }
+
     final AnalysisServer server = AnalysisServer(
       _packagesFile(),
       sdkPath,
@@ -214,6 +230,8 @@ class AnalyzeCommand extends DartdevCommand {
       enabledExperiments: args.enabledExperiments,
       suppressAnalytics: suppressAnalytics,
       useAotSnapshot: useAotSnapshot,
+      useLsp: true,
+      socket: socket,
     );
 
     server.onErrors.listen((FileAnalysisErrors fileErrors) {

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:analysis_server/src/lsp/lsp_packet_transformer.dart';
 import 'package:analysis_server/src/server/driver.dart' show Driver;
 import 'package:analysis_server_client/protocol.dart'
     show
@@ -38,12 +39,14 @@ class AnalysisServer {
     this.cacheDirectoryPath,
     required this.commandName,
     required this.argResults,
-    required this._usePlugins,
+    required bool usePlugins,
     this.enabledExperiments = const [],
     this.disableStatusNotificationDebouncing = false,
     this.suppressAnalytics = false,
     this._useAotSnapshot = false,
-  });
+    this.useLsp = false,
+    this.socket,
+  }) : _usePlugins = usePlugins;
 
   final String? cacheDirectoryPath;
   final File? packagesFile;
@@ -56,6 +59,8 @@ class AnalysisServer {
   final bool suppressAnalytics;
   final bool _useAotSnapshot;
   final bool _usePlugins;
+  final bool useLsp;
+  final Socket? socket;
 
   Process? _process;
 
@@ -74,10 +79,14 @@ class AnalysisServer {
   bool get serverErrorReceived => _serverErrorReceived;
 
   Stream<bool> get onAnalyzing {
-    // {"event":"server.status","params":{"analysis":{"isAnalyzing":true}}}
-    return _streamController('server.status').stream
-        .where((event) => event['analysis'] != null)
-        .map((event) => (event['analysis']['isAnalyzing']!) as bool);
+    if (useLsp) {
+      return _streamController(r'$/analyzerStatus').stream
+          .map((event) => event['isAnalyzing'] as bool);
+    } else {
+      return _streamController('server.status').stream
+          .where((event) => event['analysis'] != null)
+          .map((event) => (event['analysis']['isAnalyzing']!) as bool);
+    }
   }
 
   /// This future completes when we next receive an analysis finished event
@@ -86,20 +95,82 @@ class AnalysisServer {
   Future<bool>? get analysisFinished => _analysisFinished?.future;
 
   Stream<FileAnalysisErrors> get onErrors {
-    // {"event":"analysis.errors",
-    //  "params":{"file":"/Users/.../lib/main.dart","errors":[]}}
-    return _streamController('analysis.errors').stream.map((event) {
-      final file = event['file'] as String;
-      final errorsList = event['errors'] as List<dynamic>;
-      final errors = [
-        for (final error in errorsList)
-          AnalysisError((error as Map).cast<String, dynamic>()),
-      ];
-      return FileAnalysisErrors(file, errors);
-    });
+    if (useLsp) {
+      return _streamController('textDocument/publishDiagnostics').stream.map((event) {
+        final uri = event['uri'] as String;
+        final file = path.fromUri(uri);
+        final diagnostics = event['diagnostics'] as List<dynamic>;
+        final errors = [
+          for (final diagnostic in diagnostics)
+            AnalysisError(_translateDiagnostic(file, diagnostic as Map<String, dynamic>)),
+        ];
+        return FileAnalysisErrors(file, errors);
+      });
+    } else {
+      return _streamController('analysis.errors').stream.map((event) {
+        final file = event['file'] as String;
+        final errorsList = event['errors'] as List<dynamic>;
+        final errors = [
+          for (final error in errorsList)
+            AnalysisError((error as Map).cast<String, dynamic>()),
+        ];
+        return FileAnalysisErrors(file, errors);
+      });
+    }
   }
 
-  Future<int> get onExit => _process!.exitCode;
+  Map<String, dynamic> _translateDiagnostic(String file, Map<String, dynamic> diagnostic) {
+    final range = diagnostic['range'] as Map<String, dynamic>;
+    final start = range['start'] as Map<String, dynamic>;
+    
+    final startLine = (start['line'] as int) + 1;
+    final startColumn = (start['character'] as int) + 1;
+    
+    final severity = diagnostic['severity'] as int?;
+    String severityStr;
+    switch (severity) {
+      case 1:
+        severityStr = 'ERROR';
+        break;
+      case 2:
+        severityStr = 'WARNING';
+        break;
+      case 3:
+        severityStr = 'INFO';
+        break;
+      case 4:
+        severityStr = 'INFO'; // Hint
+        break;
+      default:
+        severityStr = 'INFO';
+    }
+    
+    return {
+      'severity': severityStr,
+      'type': 'LINT', // Default type
+      'location': {
+        'file': file,
+        'offset': startLine * 1000 + startColumn, // Dummy offset for sorting
+        'length': 0, // Dummy length
+        'startLine': startLine,
+        'startColumn': startColumn,
+      },
+      'message': diagnostic['message'],
+      'code': diagnostic['code']?.toString() ?? '',
+    };
+  }
+
+  Future<int> get onExit {
+    final p = _process;
+    if (p != null) {
+      return p.exitCode;
+    }
+    final s = socket;
+    if (s != null) {
+      return s.done.then((_) => 0);
+    }
+    return Future.value(0);
+  }
 
   final Map<String, StreamController<Map<String, dynamic>>> _streamControllers =
       {};
@@ -115,69 +186,98 @@ class AnalysisServer {
   Future<int> start({bool setAnalysisRoots = true}) async {
     preAnalysisServerStart?.call(commandName, analysisRoots, argResults);
 
-    final process = await _startProcess();
-    _process = process;
-    _shutdownResponseReceived = false;
-    // This callback hookup can't throw.
-    process.exitCode.whenComplete(() {
-      _process = null;
+    if (socket != null) {
+      _shutdownResponseReceived = false;
+    } else {
+      final process = await _startProcess();
+      _process = process;
+      _shutdownResponseReceived = false;
+      // This callback hookup can't throw.
+      process.exitCode.then((code) {
+        log.stderr('Analysis server process exited with code: $code');
+      }).whenComplete(() {
+        _process = null;
 
-      if (!_shutdownResponseReceived) {
-        // The process exited unexpectedly. Report the crash.
-        // If `server.error` reported an error, that has been logged by
-        // `_handleServerError`.
+        if (!_shutdownResponseReceived) {
+          // The process exited unexpectedly. Report the crash.
+          final error = StateError('The analysis server crashed unexpectedly');
 
-        final error = StateError('The analysis server crashed unexpectedly');
+          final analysisFinished = _analysisFinished;
+          if (analysisFinished != null && !analysisFinished.isCompleted) {
+            // Complete this completer in order to unstick the process.
+            analysisFinished.completeError(error);
+          }
 
-        final analysisFinished = _analysisFinished;
-        if (analysisFinished != null && !analysisFinished.isCompleted) {
-          // Complete this completer in order to unstick the process.
-          analysisFinished.completeError(error);
+          // Complete these completers in order to unstick the process.
+          for (final completer in _requestCompleters.values) {
+            completer.completeError(error);
+          }
+
+          _onCrash.complete();
         }
+      });
 
-        // Complete these completers in order to unstick the process.
-        for (final completer in _requestCompleters.values) {
-          completer.completeError(error);
-        }
+      final errorStream = process.stderr
+          .transform<String>(utf8.decoder)
+          .transform<String>(const LineSplitter());
+      errorStream.listen(log.stderr);
+    }
 
-        _onCrash.complete();
-      }
-    });
-
-    final errorStream = process.stderr
-        .transform<String>(utf8.decoder)
-        .transform<String>(const LineSplitter());
-    errorStream.listen(log.stderr);
-
-    final inStream = process.stdout
-        .transform<String>(utf8.decoder)
-        .transform<String>(const LineSplitter());
-    inStream.listen(_handleServerResponse);
-
-    _streamController('server.error').stream.listen(_handleServerError);
-
-    _streamController('server.pluginError').stream.listen(_handlePluginError);
-
-    _sendCommand(
-      'server.setSubscriptions',
-      params: <String, dynamic>{
-        'subscriptions': <String>['STATUS'],
-      },
-    );
-
-    // Reference and trim off any trailing slash, the Dart Analysis Server
-    // protocol throws an error (INVALID_FILE_PATH_FORMAT) if there is a
-    // trailing slash.
-    //
-    // The call to `absolute.resolveSymbolicLinksSync()` canonicalizes the path
-    // to be passed to the analysis server.
     final analysisRootPaths = [
       for (final root in analysisRoots)
         trimEnd(
-          root.absolute.resolveSymbolicLinksSync(),
+          (root is File ? root.parent : root).absolute.resolveSymbolicLinksSync(),
           path.context.separator,
         ),
-    ];
+    ].toSet().toList();
+
+    final streamSource = socket ?? _process!.stdout;
+
+    if (useLsp) {
+      final inStream = streamSource
+          .cast<List<int>>()
+          .transform(LspPacketTransformer());
+      inStream.listen(_handleServerResponse);
+
+      final analysisRootUris = analysisRootPaths.map((p) => path.toUri(p).toString()).toList();
+      final rootUri = analysisRootUris.isNotEmpty ? analysisRootUris.first : null;
+
+      // LSP Handshake
+      await _sendCommand(
+        'initialize',
+        params: <String, dynamic>{
+          'processId': null,
+          'rootUri': rootUri,
+          'capabilities': <String, dynamic>{},
+          if (setAnalysisRoots && analysisRootUris.isNotEmpty)
+            'workspaceFolders': analysisRootUris.map((uri) => {'uri': uri, 'name': path.basename(uri)}).toList(),
+        },
+      );
+
+      await _sendNotification('initialized');
+    } else {
+      final inStream = streamSource
+          .transform<String>(utf8.decoder)
+          .transform<String>(const LineSplitter());
+      inStream.listen(_handleServerResponse);
+
+      _streamController('server.error').stream.listen(_handleServerError);
+      _streamController('server.pluginError').stream.listen(_handlePluginError);
+
+      _sendCommand(
+        'server.setSubscriptions',
+        params: <String, dynamic>{
+          'subscriptions': <String>['STATUS'],
+        },
+      );
+
+      if (setAnalysisRoots) {
+        await _sendCommand(
+          'analysis.setAnalysisRoots',
+          params: {'included': analysisRootPaths, 'excluded': []},
+        );
+      }
+    }
 
     onAnalyzing.listen((isAnalyzing) {
       final analysisFinished = _analysisFinished;
@@ -192,41 +292,49 @@ class AnalysisServer {
       }
     });
 
-    if (setAnalysisRoots) {
-      await _sendCommand(
-        'analysis.setAnalysisRoots',
-        params: {'included': analysisRootPaths, 'excluded': []},
-      );
-    }
-
-    return process.pid;
+    return socket != null ? 0 : _process!.pid;
   }
 
   Future<Process> _startProcess() {
-    final executable = _useAotSnapshot ? sdk.dartAotRuntime : sdk.dart;
-    final arguments = [
-      if (_useAotSnapshot)
-        sdk.analysisServerAotSnapshot
-      else
-        sdk.analysisServerSnapshot,
-      if (suppressAnalytics) '--${Driver.suppressAnalyticsFlag}',
-      '--${Driver.clientIdOption}=dart-$commandName',
-      '--disable-server-feature-completion',
-      '--disable-server-feature-search',
-      if (disableStatusNotificationDebouncing)
-        '--disable-status-notification-debouncing',
-      '--disable-silent-analysis-exceptions',
-      '--sdk',
-      sdkPath.path,
-      if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
-      if (packagesFile != null) '--packages=${packagesFile!.path}',
-      if (enabledExperiments.isNotEmpty)
-        '--$experimentFlagName=${enabledExperiments.join(',')}',
-      if (!_usePlugins) '--no-plugins',
-    ];
+    if (useLsp) {
+      final executable = sdk.dart;
+      final arguments = [
+        'language-server',
+        '--protocol=lsp',
+        '--client-id=dart-$commandName',
+        '--dart-sdk=${sdkPath.path}',
+        if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
+        if (packagesFile != null) '--packages=${packagesFile!.path}',
+      ];
 
-    log.trace('$executable ${arguments.join(' ')}');
-    return Process.start(executable, arguments);
+      log.trace('$executable ${arguments.join(' ')}');
+      return Process.start(executable, arguments);
+    } else {
+      final executable = _useAotSnapshot ? sdk.dartAotRuntime : sdk.dart;
+      final arguments = [
+        if (_useAotSnapshot)
+          sdk.analysisServerAotSnapshot
+        else
+          sdk.analysisServerSnapshot,
+        if (suppressAnalytics) '--${Driver.suppressAnalyticsFlag}',
+        '--${Driver.clientIdOption}=dart-$commandName',
+        '--disable-server-feature-completion',
+        '--disable-server-feature-search',
+        if (disableStatusNotificationDebouncing)
+          '--disable-status-notification-debouncing',
+        '--disable-silent-analysis-exceptions',
+        '--sdk',
+        sdkPath.path,
+        if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
+        if (packagesFile != null) '--packages=${packagesFile!.path}',
+        if (enabledExperiments.isNotEmpty)
+          '--$experimentFlagName=${enabledExperiments.join(',')}',
+        if (!_usePlugins) '--no-plugins',
+      ];
+
+      log.trace('$executable ${arguments.join(' ')}');
+      return Process.start(executable, arguments);
+    }
   }
 
   Future<String> getVersion() {
@@ -260,10 +368,11 @@ class AnalysisServer {
 
   Future<void> shutdown({Duration? timeout}) async {
     // Request shutdown.
-    final Future<void> future = _sendCommand('server.shutdown').then((
+    final Future<void> future = _sendCommand('shutdown').then((
       Map<String, dynamic> value,
     ) {
       _shutdownResponseReceived = true;
+      _sendNotification('exit');
       return;
     });
     await (timeout != null
@@ -290,22 +399,55 @@ class AnalysisServer {
   Future<Map<String, dynamic>> _sendCommand(
     String method, {
     Map<String, dynamic>? params,
-  }) {
+  }) async {
     final String id = (++_id).toString();
     final String message = json.encode(<String, dynamic>{
+      'jsonrpc': '2.0',
       'id': id,
       'method': method,
       'params': params,
     });
 
+    final payload = 'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
+
     final Completer<Map<String, dynamic>> completer = Completer();
 
     _requestCompleters[id] = completer;
-    _process!.stdin.writeln(message);
+    
+    if (socket != null) {
+      socket!.write(payload);
+      await socket!.flush();
+    } else {
+      _process!.stdin.write(payload);
+      await _process!.stdin.flush();
+    }
 
-    log.trace('==> $message');
+    log.trace('==> $payload');
 
     return completer.future;
+  }
+
+  Future<void> _sendNotification(
+    String method, {
+    Map<String, dynamic>? params,
+  }) async {
+    final String message = json.encode(<String, dynamic>{
+      'jsonrpc': '2.0',
+      'method': method,
+      'params': params,
+    });
+
+    final payload = 'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
+    
+    if (socket != null) {
+      socket!.write(payload);
+      await socket!.flush();
+    } else {
+      _process!.stdin.write(payload);
+      await _process!.stdin.flush();
+    }
+
+    log.trace('==> $payload');
   }
 
   void _handlePluginError(Map<String, dynamic>? error) {
@@ -320,29 +462,55 @@ class AnalysisServer {
     }
   }
 
-  void _handleServerResponse(String line) {
-    log.trace('<== $line');
+  void _handleServerResponse(String message) {
+    log.trace('<== $message');
 
-    final response = json.decode(line) as Object?;
+    final response = json.decode(message) as Object?;
 
     if (response is Map<String, dynamic>) {
-      if (response case {
-        'event': final String event,
-        'params': final Object? params,
-      }) {
-        if (params is Map<String, dynamic>) {
-          _streamController(event).add(params.cast<String, dynamic>());
-        }
-      } else if (response case {'id': final String id}) {
-        if (response case {'error': final Map<String, Object?> error}) {
-          _requestCompleters
-              .remove(id)
-              ?.completeError(
-                RequestError.parse(error.cast<String, dynamic>()),
-              );
+      if (response.containsKey('id')) {
+        // Response or Request
+        final id = response['id'].toString();
+        if (response.containsKey('method')) {
+          // Request from server to client (not expected in this simple client)
+          log.trace('Received request from server: ${response['method']}');
         } else {
-          _requestCompleters.remove(id)?.complete(response['result'] ?? {});
+          // Response to a request we sent
+          if (response.containsKey('error')) {
+            final error = response['error'] as Map<String, dynamic>;
+            _requestCompleters.remove(id)?.completeError(
+                  RequestError(
+                    error['code']?.toString() ?? '',
+                    error['message'] as String? ?? '',
+                    stackTrace: error['data']?.toString() ?? '',
+                  ),
+                );
+          } else {
+            _requestCompleters.remove(id)?.complete(
+                  (response['result'] as Map<String, dynamic>?) ?? {},
+                );
+          }
         }
+      } else if (response.containsKey('method')) {
+        // Notification
+        final method = response['method'] as String;
+        final params = response['params'] as Map<String, dynamic>?;
+        
+        if (useLsp && method == r'$/progress') {
+          final token = params?['token'];
+          if (token == 'ANALYZING') {
+            final value = params?['value'] as Map<String, dynamic>?;
+            final kind = value?['kind'] as String?;
+            if (kind == 'begin') {
+              _streamController(r'$/analyzerStatus').add({'isAnalyzing': true});
+            } else if (kind == 'end') {
+              _streamController(r'$/analyzerStatus').add({'isAnalyzing': false});
+            }
+          }
+        }
+        
+        // Route notifications to stream controllers based on method name.
+        _streamController(method).add(params ?? {});
       }
     }
   }

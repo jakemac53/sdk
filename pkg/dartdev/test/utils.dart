@@ -182,8 +182,14 @@ class TestProject {
     String? workingDir,
   }) async {
     final process = await start(arguments, workingDir: workingDir);
-    final stdoutContents = process.stdout.transform(utf8.decoder).join();
-    final stderrContents = process.stderr.transform(utf8.decoder).join();
+    final stdoutContents = process.stdout.transform(utf8.decoder).map((s) {
+      print('STDOUT: $s');
+      return s;
+    }).join();
+    final stderrContents = process.stderr.transform(utf8.decoder).map((s) {
+      print('STDERR: $s');
+      return s;
+    }).join();
     final code = await process.exitCode;
     return ProcessResult(
       process.pid,
