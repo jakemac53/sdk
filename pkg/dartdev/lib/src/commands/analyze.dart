@@ -230,7 +230,6 @@ class AnalyzeCommand extends DartdevCommand {
       enabledExperiments: args.enabledExperiments,
       suppressAnalytics: suppressAnalytics,
       useAotSnapshot: useAotSnapshot,
-      useLsp: true,
       socket: socket,
     );
 

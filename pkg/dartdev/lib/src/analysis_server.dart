@@ -44,7 +44,6 @@ class AnalysisServer {
     this.disableStatusNotificationDebouncing = false,
     this.suppressAnalytics = false,
     this._useAotSnapshot = false,
-    this.useLsp = false,
     this.socket,
   }) : _usePlugins = usePlugins;
 
@@ -59,7 +58,6 @@ class AnalysisServer {
   final bool suppressAnalytics;
   final bool _useAotSnapshot;
   final bool _usePlugins;
-  final bool useLsp;
   final Socket? socket;
 
   Process? _process;
@@ -79,14 +77,9 @@ class AnalysisServer {
   bool get serverErrorReceived => _serverErrorReceived;
 
   Stream<bool> get onAnalyzing {
-    if (useLsp) {
-      return _streamController(r'$/analyzerStatus').stream
-          .map((event) => event['isAnalyzing'] as bool);
-    } else {
-      return _streamController('server.status').stream
-          .where((event) => event['analysis'] != null)
-          .map((event) => (event['analysis']['isAnalyzing']!) as bool);
-    }
+    return _streamController(
+      r'$/analyzerStatus',
+    ).stream.map((event) => event['isAnalyzing'] as bool);
   }
 
   /// This future completes when we next receive an analysis finished event
@@ -95,37 +88,32 @@ class AnalysisServer {
   Future<bool>? get analysisFinished => _analysisFinished?.future;
 
   Stream<FileAnalysisErrors> get onErrors {
-    if (useLsp) {
-      return _streamController('textDocument/publishDiagnostics').stream.map((event) {
-        final uri = event['uri'] as String;
-        final file = path.fromUri(uri);
-        final diagnostics = event['diagnostics'] as List<dynamic>;
-        final errors = [
-          for (final diagnostic in diagnostics)
-            AnalysisError(_translateDiagnostic(file, diagnostic as Map<String, dynamic>)),
-        ];
-        return FileAnalysisErrors(file, errors);
-      });
-    } else {
-      return _streamController('analysis.errors').stream.map((event) {
-        final file = event['file'] as String;
-        final errorsList = event['errors'] as List<dynamic>;
-        final errors = [
-          for (final error in errorsList)
-            AnalysisError((error as Map).cast<String, dynamic>()),
-        ];
-        return FileAnalysisErrors(file, errors);
-      });
-    }
+    return _streamController('textDocument/publishDiagnostics').stream.map((
+      event,
+    ) {
+      final uri = event['uri'] as String;
+      final file = path.fromUri(uri);
+      final diagnostics = event['diagnostics'] as List<dynamic>;
+      final errors = [
+        for (final diagnostic in diagnostics)
+          AnalysisError(
+            _translateDiagnostic(file, diagnostic as Map<String, dynamic>),
+          ),
+      ];
+      return FileAnalysisErrors(file, errors);
+    });
   }
 
-  Map<String, dynamic> _translateDiagnostic(String file, Map<String, dynamic> diagnostic) {
+  Map<String, dynamic> _translateDiagnostic(
+    String file,
+    Map<String, dynamic> diagnostic,
+  ) {
     final range = diagnostic['range'] as Map<String, dynamic>;
     final start = range['start'] as Map<String, dynamic>;
-    
+
     final startLine = (start['line'] as int) + 1;
     final startColumn = (start['character'] as int) + 1;
-    
+
     final severity = diagnostic['severity'] as int?;
     String severityStr;
     switch (severity) {
@@ -144,7 +132,7 @@ class AnalysisServer {
       default:
         severityStr = 'INFO';
     }
-    
+
     return {
       'severity': severityStr,
       'type': 'LINT', // Default type
@@ -193,29 +181,33 @@ class AnalysisServer {
       _process = process;
       _shutdownResponseReceived = false;
       // This callback hookup can't throw.
-      process.exitCode.then((code) {
-        log.stderr('Analysis server process exited with code: $code');
-      }).whenComplete(() {
-        _process = null;
+      process.exitCode
+          .then((code) {
+            log.stderr('Analysis server process exited with code: $code');
+          })
+          .whenComplete(() {
+            _process = null;
 
-        if (!_shutdownResponseReceived) {
-          // The process exited unexpectedly. Report the crash.
-          final error = StateError('The analysis server crashed unexpectedly');
+            if (!_shutdownResponseReceived) {
+              // The process exited unexpectedly. Report the crash.
+              final error = StateError(
+                'The analysis server crashed unexpectedly',
+              );
 
-          final analysisFinished = _analysisFinished;
-          if (analysisFinished != null && !analysisFinished.isCompleted) {
-            // Complete this completer in order to unstick the process.
-            analysisFinished.completeError(error);
-          }
+              final analysisFinished = _analysisFinished;
+              if (analysisFinished != null && !analysisFinished.isCompleted) {
+                // Complete this completer in order to unstick the process.
+                analysisFinished.completeError(error);
+              }
 
-          // Complete these completers in order to unstick the process.
-          for (final completer in _requestCompleters.values) {
-            completer.completeError(error);
-          }
+              // Complete these completers in order to unstick the process.
+              for (final completer in _requestCompleters.values) {
+                completer.completeError(error);
+              }
 
-          _onCrash.complete();
-        }
-      });
+              _onCrash.complete();
+            }
+          });
 
       final errorStream = process.stderr
           .transform<String>(utf8.decoder)
@@ -226,58 +218,39 @@ class AnalysisServer {
     final analysisRootPaths = [
       for (final root in analysisRoots)
         trimEnd(
-          (root is File ? root.parent : root).absolute.resolveSymbolicLinksSync(),
+          (root is File ? root.parent : root).absolute
+              .resolveSymbolicLinksSync(),
           path.context.separator,
         ),
     ].toSet().toList();
 
     final streamSource = socket ?? _process!.stdout;
 
-    if (useLsp) {
-      final inStream = streamSource
-          .cast<List<int>>()
-          .transform(LspPacketTransformer());
-      inStream.listen(_handleServerResponse);
+    final inStream = streamSource.cast<List<int>>().transform(
+      LspPacketTransformer(),
+    );
+    inStream.listen(_handleServerResponse);
 
-      final analysisRootUris = analysisRootPaths.map((p) => path.toUri(p).toString()).toList();
-      final rootUri = analysisRootUris.isNotEmpty ? analysisRootUris.first : null;
+    final analysisRootUris = analysisRootPaths
+        .map((p) => path.toUri(p).toString())
+        .toList();
+    final rootUri = analysisRootUris.isNotEmpty ? analysisRootUris.first : null;
 
-      // LSP Handshake
-      await _sendCommand(
-        'initialize',
-        params: <String, dynamic>{
-          'processId': null,
-          'rootUri': rootUri,
-          'capabilities': <String, dynamic>{},
-          if (setAnalysisRoots && analysisRootUris.isNotEmpty)
-            'workspaceFolders': analysisRootUris.map((uri) => {'uri': uri, 'name': path.basename(uri)}).toList(),
-        },
-      );
+    // LSP Handshake
+    await _sendCommand(
+      'initialize',
+      params: <String, dynamic>{
+        'processId': null,
+        'rootUri': rootUri,
+        'capabilities': <String, dynamic>{},
+        if (setAnalysisRoots && analysisRootUris.isNotEmpty)
+          'workspaceFolders': analysisRootUris
+              .map((uri) => {'uri': uri, 'name': path.basename(uri)})
+              .toList(),
+      },
+    );
 
-      await _sendNotification('initialized');
-    } else {
-      final inStream = streamSource
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter());
-      inStream.listen(_handleServerResponse);
-
-      _streamController('server.error').stream.listen(_handleServerError);
-      _streamController('server.pluginError').stream.listen(_handlePluginError);
-
-      _sendCommand(
-        'server.setSubscriptions',
-        params: <String, dynamic>{
-          'subscriptions': <String>['STATUS'],
-        },
-      );
-
-      if (setAnalysisRoots) {
-        await _sendCommand(
-          'analysis.setAnalysisRoots',
-          params: {'included': analysisRootPaths, 'excluded': []},
-        );
-      }
-    }
+    await _sendNotification('initialized');
 
     onAnalyzing.listen((isAnalyzing) {
       final analysisFinished = _analysisFinished;
@@ -296,45 +269,18 @@ class AnalysisServer {
   }
 
   Future<Process> _startProcess() {
-    if (useLsp) {
-      final executable = sdk.dart;
-      final arguments = [
-        'language-server',
-        '--protocol=lsp',
-        '--client-id=dart-$commandName',
-        '--dart-sdk=${sdkPath.path}',
-        if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
-        if (packagesFile != null) '--packages=${packagesFile!.path}',
-      ];
+    final executable = sdk.dart;
+    final arguments = [
+      'language-server',
+      '--protocol=lsp',
+      '--client-id=dart-$commandName',
+      '--dart-sdk=${sdkPath.path}',
+      if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
+      if (packagesFile != null) '--packages=${packagesFile!.path}',
+    ];
 
-      log.trace('$executable ${arguments.join(' ')}');
-      return Process.start(executable, arguments);
-    } else {
-      final executable = _useAotSnapshot ? sdk.dartAotRuntime : sdk.dart;
-      final arguments = [
-        if (_useAotSnapshot)
-          sdk.analysisServerAotSnapshot
-        else
-          sdk.analysisServerSnapshot,
-        if (suppressAnalytics) '--${Driver.suppressAnalyticsFlag}',
-        '--${Driver.clientIdOption}=dart-$commandName',
-        '--disable-server-feature-completion',
-        '--disable-server-feature-search',
-        if (disableStatusNotificationDebouncing)
-          '--disable-status-notification-debouncing',
-        '--disable-silent-analysis-exceptions',
-        '--sdk',
-        sdkPath.path,
-        if (cacheDirectoryPath != null) '--cache=$cacheDirectoryPath',
-        if (packagesFile != null) '--packages=${packagesFile!.path}',
-        if (enabledExperiments.isNotEmpty)
-          '--$experimentFlagName=${enabledExperiments.join(',')}',
-        if (!_usePlugins) '--no-plugins',
-      ];
-
-      log.trace('$executable ${arguments.join(' ')}');
-      return Process.start(executable, arguments);
-    }
+    log.trace('$executable ${arguments.join(' ')}');
+    return Process.start(executable, arguments);
   }
 
   Future<String> getVersion() {
@@ -408,12 +354,13 @@ class AnalysisServer {
       'params': params,
     });
 
-    final payload = 'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
+    final payload =
+        'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
 
     final Completer<Map<String, dynamic>> completer = Completer();
 
     _requestCompleters[id] = completer;
-    
+
     if (socket != null) {
       socket!.write(payload);
       await socket!.flush();
@@ -437,8 +384,9 @@ class AnalysisServer {
       'params': params,
     });
 
-    final payload = 'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
-    
+    final payload =
+        'Content-Length: ${utf8.encode(message).length}\r\n\r\n$message';
+
     if (socket != null) {
       socket!.write(payload);
       await socket!.flush();
@@ -478,7 +426,9 @@ class AnalysisServer {
           // Response to a request we sent
           if (response.containsKey('error')) {
             final error = response['error'] as Map<String, dynamic>;
-            _requestCompleters.remove(id)?.completeError(
+            _requestCompleters
+                .remove(id)
+                ?.completeError(
                   RequestError(
                     error['code']?.toString() ?? '',
                     error['message'] as String? ?? '',
@@ -486,7 +436,9 @@ class AnalysisServer {
                   ),
                 );
           } else {
-            _requestCompleters.remove(id)?.complete(
+            _requestCompleters
+                .remove(id)
+                ?.complete(
                   (response['result'] as Map<String, dynamic>?) ?? {},
                 );
           }
@@ -495,8 +447,8 @@ class AnalysisServer {
         // Notification
         final method = response['method'] as String;
         final params = response['params'] as Map<String, dynamic>?;
-        
-        if (useLsp && method == r'$/progress') {
+
+        if (method == r'$/progress') {
           final token = params?['token'];
           if (token == 'ANALYZING') {
             final value = params?['value'] as Map<String, dynamic>?;
@@ -504,31 +456,16 @@ class AnalysisServer {
             if (kind == 'begin') {
               _streamController(r'$/analyzerStatus').add({'isAnalyzing': true});
             } else if (kind == 'end') {
-              _streamController(r'$/analyzerStatus').add({'isAnalyzing': false});
+              _streamController(
+                r'$/analyzerStatus',
+              ).add({'isAnalyzing': false});
             }
           }
         }
-        
+
         // Route notifications to stream controllers based on method name.
         _streamController(method).add(params ?? {});
       }
-    }
-  }
-
-  void _handleServerError(Map<String, dynamic>? error) {
-    _serverErrorReceived = true;
-    final err = error!;
-    log.stderr('An unexpected error was encountered by the Analysis Server.');
-    log.stderr(
-      'Please file an issue at '
-      'https://github.com/dart-lang/sdk/issues/new/choose with the following '
-      'details:\n',
-    );
-    // Fields are 'isFatal', 'message', and 'stackTrace'.
-    log.stderr(err['message']);
-    final stackTrace = err['stackTrace'];
-    if (stackTrace is String && stackTrace.isNotEmpty) {
-      log.stderr(stackTrace);
     }
   }
 
