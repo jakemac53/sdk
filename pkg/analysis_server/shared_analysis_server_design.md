@@ -106,6 +106,15 @@ When dealing with clients of varying capabilities, the Multiplexer has a few opt
 - **Start**: The server starts when the first client connects to the Multiplexer.
 - **Stop**: The server stops after the last client disconnects, potentially after a timeout to handle quick restarts.
 
+### 5. In-Memory Edits and Overlays
+
+**Challenge**: Clients like IDEs send `textDocument/didChange` notifications to update the server's view of a file (an overlay) before saving to disk. If multiple clients share the server, their views might conflict, or diagnostics might be misaligned for clients that don't have the edits.
+
+**Proposed Solution**:
+- **Global Overlays**: The Multiplexer forwards all `didOpen`, `didChange`, and `didClose` notifications directly to the server, maintaining a single set of overlays.
+- **Diagnostic Misalignment Warning**: If Client B views a file that Client A has edited in memory (unsaved), the Multiplexer will send a `window/showMessage` notification to Client B warning that diagnostics may be misaligned.
+- **Quick Fix Protection**: When a client requests `textDocument/codeAction` or the server sends `workspace/applyEdit` involving files with unsaved overlays from *another* client, the Multiplexer will block the operation and notify the user to save files in the other client first. This prevents file corruption due to misaligned edits.
+
 ## Alternatives Considered
 
 ### A. Client-side connection sharing

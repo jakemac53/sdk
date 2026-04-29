@@ -720,11 +720,7 @@ class LspAnalysisServer extends AnalysisServer {
       _filesWithClientDiagnostics.add(path);
     }
 
-    var lastSent = _lastSentDiagnostics[path];
-    if (lastSent != null && _areDiagnosticsEqual(lastSent, errors)) {
-      return;
-    }
-    _lastSentDiagnostics[path] = errors;
+
 
     var params = PublishDiagnosticsParams(
       uri: uriConverter.toClientUri(path),

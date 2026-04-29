@@ -89,7 +89,10 @@ Future<int> runMultiplexer() async {
   serverProcess.stderr.listen((data) => stderr.add(data));
 
   // Start multiplexer instance
-  final multiplexer = Multiplexer(serverProcess);
+  final logFile = File(p.join(p.dirname(discoveryFile), 'multiplexer.log'));
+  final logSink = logFile.openWrite(mode: FileMode.append);
+  stderr.writeln('Logging traffic to ${logFile.path}');
+  final multiplexer = Multiplexer(serverProcess, logSink);
 
   // Listen for client connections
   await for (final socket in serverSocket) {
@@ -102,6 +105,7 @@ Future<int> runMultiplexer() async {
 
 class Multiplexer {
   final Process _serverProcess;
+  final IOSink? _logSink;
   final List<Socket> _clients = [];
   final Map<String, _PendingRequest> _pendingRequests = {};
   int _requestIdCounter = 0;
@@ -115,6 +119,8 @@ class Multiplexer {
   Set<String> _currentServerWorkspaces = {};
   final Map<Socket, Map<String, dynamic>> _clientCapabilities = {};
   final Map<Socket, Set<String>> _clientOpenFiles = {};
+  final Map<Socket, Set<String>> _clientDirtyFiles = {};
+  final Map<String, Socket> _lastWriterPerFile = {};
   final Map<String, String> _cachedDiagnostics = {};
   final List<Map<String, dynamic>> _cachedRegistrations = [];
   final Map<String, dynamic> _pendingServerRequests = {};
@@ -122,11 +128,28 @@ class Multiplexer {
   Timer? _shutdownTimer;
   static const Duration _shutdownTimeout = Duration(seconds: 60);
 
-  Multiplexer(this._serverProcess) {
+  Multiplexer(this._serverProcess, this._logSink) {
     _serverProcess.stdout
         .cast<List<int>>()
         .transform(LspPacketTransformer())
         .listen(_handleServerMessage);
+  }
+
+  void _log(String tag, String message) {
+    if (_logSink != null) {
+      final now = DateTime.now().toIso8601String();
+      _logSink!.writeln('[$now] $tag $message');
+    }
+  }
+
+  void _sendToClient(Socket client, String payload) {
+    client.write(formatLspMessage(payload));
+    _log('<== CLIENT', payload);
+  }
+
+  void _sendToServer(String payload) {
+    _serverProcess.stdin.write(formatLspMessage(payload));
+    _log('==> SERVER', payload);
   }
 
   void addClient(Socket socket) {
@@ -170,6 +193,7 @@ class Multiplexer {
   }
 
   void _handleServerMessage(String messagePayload) {
+    _log('<== SERVER', messagePayload);
     final message = jsonDecode(messagePayload) as Map<String, dynamic>;
 
     if (message.containsKey('id') && !message.containsKey('method')) {
@@ -179,8 +203,17 @@ class Multiplexer {
         if (serverId == _initialInitializeRequestId) {
           _initializeResult = message['result'] as Map<String, dynamic>?;
         }
+        if (pending.method == 'textDocument/codeAction') {
+          final result = message['result'] as List<dynamic>?;
+          if (result != null) {
+            if (_anyFileIsDirtyByOthers(pending.client, result)) {
+              _sendQuickFixFailed(pending.client, pending.clientId);
+              return;
+            }
+          }
+        }
         message['id'] = pending.clientId;
-        pending.client.write(formatLspMessage(jsonEncode(message)));
+        _sendToClient(pending.client, jsonEncode(message));
       }
     } else if (message.containsKey('id') && message.containsKey('method')) {
       // Request from server to client
@@ -188,18 +221,60 @@ class Multiplexer {
       final method = message['method'];
       stderr.writeln('Received request from server: $method');
 
+      Socket? targetClient;
+
       if (method == 'client/registerCapability') {
         _handleRegisterCapability(message);
         return;
       }
 
-      // For now, route to the first client as a fallback.
-      if (_clients.isNotEmpty) {
-        final client = _clients.first;
+      if (method == 'workspace/applyEdit') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final edit = params?['edit'] as Map<String, dynamic>?;
+        if (edit != null) {
+          final changes = edit['changes'] as Map<String, dynamic>?;
+          if (changes != null) {
+            // Find target client by last writer
+            for (final uri in changes.keys) {
+              targetClient = _lastWriterPerFile[uri];
+              if (targetClient != null) break;
+            }
+          }
+        }
+      }
+
+      // Fallback to first client if no target found
+      targetClient ??= _clients.isNotEmpty ? _clients.first : null;
+
+      if (targetClient != null) {
+        // If it's applyEdit, check for conflicts
+        if (method == 'workspace/applyEdit') {
+          final params = message['params'] as Map<String, dynamic>?;
+          final edit = params?['edit'] as Map<String, dynamic>?;
+          final changes = edit?['changes'] as Map<String, dynamic>?;
+          if (changes != null) {
+            for (final uri in changes.keys) {
+              if (_isFileDirtyByOthers(targetClient, uri)) {
+                final response = {
+                  'jsonrpc': '2.0',
+                  'id': serverId,
+                  'result': {
+                    'applied': false,
+                    'failureReason': 'Conflicting unsaved edits in another window.'
+                  }
+                };
+                _sendToServer(jsonEncode(response));
+                _sendWarning(targetClient, "Quick fix failed: conflicting unsaved edits in another window.");
+                return;
+              }
+            }
+          }
+        }
+
         final clientId = 'srv_req_${_serverRequestIdCounter++}';
         _pendingServerRequests[clientId] = serverId;
         message['id'] = clientId;
-        client.write(formatLspMessage(jsonEncode(message)));
+        targetClient.write(formatLspMessage(jsonEncode(message)));
       }
     } else {
       // Notification from server to client
@@ -225,13 +300,12 @@ class Multiplexer {
               'method': r'$/analyzerStatus',
               'params': {'isAnalyzing': isAnalyzing},
             };
-            final statusPayload = formatLspMessage(jsonEncode(statusMessage));
             for (final client in _clients) {
               final capabilities = _clientCapabilities[client];
               final window = capabilities?['window'] as Map<String, dynamic>?;
               final supportsProgress = window?['workDoneProgress'] == true;
               if (!supportsProgress) {
-                client.write(statusPayload);
+                _sendToClient(client, jsonEncode(statusMessage));
               }
             }
           }
@@ -251,7 +325,7 @@ class Multiplexer {
             // Check if client has file open
             final openFiles = _clientOpenFiles[client];
             if (openFiles != null && openFiles.contains(uri)) {
-              client.write(formatLspMessage(messagePayload));
+              _sendToClient(client, messagePayload);
               continue;
             }
 
@@ -260,7 +334,7 @@ class Multiplexer {
             if (workspaces != null) {
               for (final workspaceUri in workspaces) {
                 if (uri.startsWith(workspaceUri)) {
-                  client.write(formatLspMessage(messagePayload));
+                  _sendToClient(client, messagePayload);
                   break; // Found match for this client
                 }
               }
@@ -272,12 +346,13 @@ class Multiplexer {
 
       // Fallback: broadcast other notifications
       for (final client in _clients) {
-        client.write(formatLspMessage(messagePayload));
+        _sendToClient(client, messagePayload);
       }
     }
   }
 
   void _handleClientMessage(Socket client, String messagePayload) async {
+    _log('==> CLIENT', messagePayload);
     final message = jsonDecode(messagePayload) as Map<String, dynamic>;
 
     if (message.containsKey('id') && message.containsKey('method')) {
@@ -307,7 +382,7 @@ class Multiplexer {
             'id': clientId,
             'result': _initializeResult,
           };
-          client.write(formatLspMessage(jsonEncode(response)));
+          _sendToClient(client, jsonEncode(response));
 
           // Check for new capabilities to register with the server.
           final newRegistrations = <Map<String, dynamic>>[];
@@ -332,9 +407,7 @@ class Multiplexer {
               'method': 'server/registerCapability',
               'params': {'registrations': newRegistrations},
             };
-            _serverProcess.stdin.write(
-              formatLspMessage(jsonEncode(regMessage)),
-            );
+            _sendToServer(jsonEncode(regMessage));
           }
           return;
         } else {
@@ -342,27 +415,24 @@ class Multiplexer {
           _pendingRequests[_initialInitializeRequestId!] = _PendingRequest(
             client,
             clientId,
+            method as String,
           );
           message['id'] = _initialInitializeRequestId;
-          _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
+          _sendToServer(jsonEncode(message));
           return;
         }
       } else if (method == 'shutdown') {
         // Don't actually forward these, just close the socket after sending a response;
-        client.write(
-          formatLspMessage(
-            jsonEncode({'jsonrpc': '2.0', 'id': clientId, 'result': null}),
-          ),
-        );
+        _sendToClient(client, jsonEncode({'jsonrpc': '2.0', 'id': clientId, 'result': null}));
         await client.flush();
         client.close();
         return;
       }
 
       final serverId = 'req_${_requestIdCounter++}';
-      _pendingRequests[serverId] = _PendingRequest(client, clientId);
+      _pendingRequests[serverId] = _PendingRequest(client, clientId, method as String);
       message['id'] = serverId;
-      _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
+      _sendToServer(jsonEncode(message));
     } else if (message.containsKey('id') && !message.containsKey('method')) {
       // Response from client to server
       final clientId = message['id'];
@@ -383,7 +453,7 @@ class Multiplexer {
               'id': pending.serverId,
               'result': null,
             };
-            _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+            _sendToServer(jsonEncode(response));
           }
         }
 
@@ -397,7 +467,7 @@ class Multiplexer {
               'message': 'All clients failed to register capability',
             },
           };
-          _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+          _sendToServer(jsonEncode(response));
         }
 
         return;
@@ -406,7 +476,7 @@ class Multiplexer {
       final serverId = _pendingServerRequests.remove(clientId);
       if (serverId != null) {
         message['id'] = serverId;
-        _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
+        _sendToServer(jsonEncode(message));
       }
     } else {
       // Notifications
@@ -415,14 +485,13 @@ class Multiplexer {
         if (_isServerInitialized) {
           _replayCachedDiagnostics(client);
           _replayCachedRegistrations(client);
-          client.write(
-            formatLspMessage(
-              jsonEncode({
-                'jsonrpc': '2.0',
-                'method': r'$/analyzerStatus',
-                'params': {'isAnalyzing': _isAnalyzing},
-              }),
-            ),
+          _sendToClient(
+            client,
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'method': r'$/analyzerStatus',
+              'params': {'isAnalyzing': _isAnalyzing},
+            }),
           );
           return;
         }
@@ -433,6 +502,24 @@ class Multiplexer {
         final uri = textDocument?['uri'] as String?;
         if (uri != null) {
           _clientOpenFiles.putIfAbsent(client, () => {}).add(uri);
+          _lastWriterPerFile[uri] = client;
+          _warnIfDirtyByOthers(client, uri);
+        }
+      } else if (method == 'textDocument/didChange') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final textDocument = params?['textDocument'] as Map<String, dynamic>?;
+        final uri = textDocument?['uri'] as String?;
+        if (uri != null) {
+          _clientDirtyFiles.putIfAbsent(client, () => {}).add(uri);
+          _lastWriterPerFile[uri] = client;
+          _warnOtherClientsIfDirty(client, uri);
+        }
+      } else if (method == 'textDocument/didSave') {
+        final params = message['params'] as Map<String, dynamic>?;
+        final textDocument = params?['textDocument'] as Map<String, dynamic>?;
+        final uri = textDocument?['uri'] as String?;
+        if (uri != null) {
+          _clientDirtyFiles[client]?.remove(uri);
         }
       } else if (method == 'textDocument/didClose') {
         final params = message['params'] as Map<String, dynamic>?;
@@ -440,6 +527,7 @@ class Multiplexer {
         final uri = textDocument?['uri'] as String?;
         if (uri != null) {
           _clientOpenFiles[client]?.remove(uri);
+          _clientDirtyFiles[client]?.remove(uri);
         }
       } else if (method == 'exit') {
         // Close the socket and return, do not send exit message to the actual
@@ -447,7 +535,7 @@ class Multiplexer {
         client.close();
         return;
       }
-      _serverProcess.stdin.write(formatLspMessage(messagePayload));
+      _sendToServer(messagePayload);
     }
   }
 
@@ -476,7 +564,7 @@ class Multiplexer {
             },
           },
         };
-        _serverProcess.stdin.write(formatLspMessage(jsonEncode(notification)));
+        _sendToServer(jsonEncode(notification));
       }
       _currentServerWorkspaces = allFolders;
     }
@@ -489,7 +577,7 @@ class Multiplexer {
     _cachedDiagnostics.forEach((uri, messagePayload) {
       // Check if client has file open
       if (openFiles != null && openFiles.contains(uri)) {
-        client.write(formatLspMessage(messagePayload));
+        _sendToClient(client, messagePayload);
         return;
       }
 
@@ -497,7 +585,7 @@ class Multiplexer {
       if (workspaces != null) {
         for (final workspaceUri in workspaces) {
           if (uri.startsWith(workspaceUri)) {
-            client.write(formatLspMessage(messagePayload));
+            _sendToClient(client, messagePayload);
             break;
           }
         }
@@ -522,8 +610,83 @@ class Multiplexer {
         'method': 'client/registerCapability',
         'params': {'registrations': supported},
       };
-      client.write(formatLspMessage(jsonEncode(clientMessage)));
+      _sendToClient(client, jsonEncode(clientMessage));
     }
+  }
+
+  void _warnIfDirtyByOthers(Socket client, String uri) {
+    for (final otherClient in _clients) {
+      if (otherClient == client) continue;
+      final dirtyFiles = _clientDirtyFiles[otherClient];
+      if (dirtyFiles != null && dirtyFiles.contains(uri)) {
+        _sendWarning(client, 'Warning: File $uri has unsaved edits in another IDE window. Diagnostics may be misaligned.');
+        break;
+      }
+    }
+  }
+
+  void _warnOtherClientsIfDirty(Socket editingClient, String uri) {
+    for (final client in _clients) {
+      if (client == editingClient) continue;
+      final openFiles = _clientOpenFiles[client];
+      if (openFiles != null && openFiles.contains(uri)) {
+        _sendWarning(client, 'Warning: File $uri has unsaved edits in another IDE window. Diagnostics may be misaligned.');
+      }
+    }
+  }
+
+  void _sendWarning(Socket client, String message) {
+    final msg = {
+      'jsonrpc': '2.0',
+      'method': 'window/showMessage',
+      'params': {
+        'type': 2, // Warning
+        'message': message
+      }
+    };
+    _sendToClient(client, jsonEncode(msg));
+  }
+
+  bool _anyFileIsDirtyByOthers(Socket client, List<dynamic> actions) {
+    for (final action in actions) {
+      if (action is! Map<String, dynamic>) continue;
+      final edit = action['edit'] as Map<String, dynamic>?;
+      if (edit != null) {
+        final changes = edit['changes'] as Map<String, dynamic>?;
+        if (changes != null) {
+          for (final uri in changes.keys) {
+            if (_isFileDirtyByOthers(client, uri)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _isFileDirtyByOthers(Socket client, String uri) {
+    for (final otherClient in _clients) {
+      if (otherClient == client) continue;
+      final dirtyFiles = _clientDirtyFiles[otherClient];
+      if (dirtyFiles != null && dirtyFiles.contains(uri)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _sendQuickFixFailed(Socket client, dynamic clientId) {
+    final response = {
+      'jsonrpc': '2.0',
+      'id': clientId,
+      'error': {
+        'code': -32603,
+        'message': 'Quick fix failed. Some files have unsaved edits in another window. Please save them first.'
+      }
+    };
+    _sendToClient(client, jsonEncode(response));
+    _sendWarning(client, "Quick fix failed: conflicting unsaved edits in another window.");
   }
 
   void _handleRegisterCapability(Map<String, dynamic> message) {
@@ -571,7 +734,7 @@ class Multiplexer {
           'method': 'client/registerCapability',
           'params': {'registrations': clientRegistrations[client]},
         };
-        client.write(formatLspMessage(jsonEncode(clientMessage)));
+        _sendToClient(client, jsonEncode(clientMessage));
       }
     } else {
       stderr.writeln(
@@ -585,7 +748,7 @@ class Multiplexer {
           'message': 'No client supports any of the requested capabilities',
         },
       };
-      _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
+      _sendToServer(jsonEncode(response));
     }
   }
 
@@ -601,6 +764,20 @@ class Multiplexer {
 
     final sectionMap = capabilities[section] as Map<String, dynamic>?;
     if (sectionMap == null) return false;
+
+    // Special case for document synchronization methods which are grouped under
+    // 'synchronization' in client capabilities.
+    if (section == 'textDocument' &&
+        (feature == 'didOpen' ||
+            feature == 'didChange' ||
+            feature == 'didClose' ||
+            feature == 'didSave')) {
+      final syncMap = sectionMap['synchronization'] as Map<String, dynamic>?;
+      if (syncMap != null) {
+        final dynamicRegistration = syncMap['dynamicRegistration'];
+        if (dynamicRegistration is bool) return dynamicRegistration;
+      }
+    }
 
     final featureMap = sectionMap[feature];
     if (featureMap == null) return false;
@@ -632,7 +809,8 @@ class Multiplexer {
 class _PendingRequest {
   final Socket client;
   final dynamic clientId;
-  _PendingRequest(this.client, this.clientId);
+  final String method;
+  _PendingRequest(this.client, this.clientId, this.method);
 }
 
 class _PendingServerRequest {
