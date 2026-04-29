@@ -126,6 +126,10 @@ class LspAnalysisServer extends AnalysisServer {
   /// imports was modified, etc).
   final Set<String> _filesWithClientDiagnostics = {};
 
+  /// Tracks the last sent diagnostics for each file to avoid sending
+  /// redundant identical diagnostics.
+  final Map<String, List<Diagnostic>> _lastSentDiagnostics = {};
+
   /// Capabilities that have been dynamically registered by the client/multiplexer.
   final Set<String> activeDynamicCapabilities = {};
 
@@ -716,6 +720,12 @@ class LspAnalysisServer extends AnalysisServer {
       _filesWithClientDiagnostics.add(path);
     }
 
+    var lastSent = _lastSentDiagnostics[path];
+    if (lastSent != null && _areDiagnosticsEqual(lastSent, errors)) {
+      return;
+    }
+    _lastSentDiagnostics[path] = errors;
+
     var params = PublishDiagnosticsParams(
       uri: uriConverter.toClientUri(path),
       diagnostics: errors,
@@ -725,7 +735,45 @@ class LspAnalysisServer extends AnalysisServer {
       params: params,
       jsonrpc: jsonRpcVersion,
     );
+    
     sendLspNotification(message);
+  }
+
+  bool _areDiagnosticsEqual(List<Diagnostic> a, List<Diagnostic> b) {
+    if (a.length != b.length) return false;
+
+    // Create sorted copies to ensure deterministic order
+    var sortedA = List<Diagnostic>.from(a)..sort(_compareDiagnostics);
+    var sortedB = List<Diagnostic>.from(b)..sort(_compareDiagnostics);
+
+    for (var i = 0; i < a.length; i++) {
+      var da = sortedA[i];
+      var db = sortedB[i];
+      if (da.message != db.message ||
+          da.severity != db.severity ||
+          da.code != db.code ||
+          !_areRangesEqual(da.range, db.range)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  int _compareDiagnostics(Diagnostic a, Diagnostic b) {
+    var lineDiff = a.range.start.line - b.range.start.line;
+    if (lineDiff != 0) return lineDiff;
+
+    var charDiff = a.range.start.character - b.range.start.character;
+    if (charDiff != 0) return charDiff;
+
+    return a.message.compareTo(b.message);
+  }
+
+  bool _areRangesEqual(Range a, Range b) {
+    return a.start.line == b.start.line &&
+        a.start.character == b.start.character &&
+        a.end.line == b.end.line &&
+        a.end.character == b.end.character;
   }
 
   void publishFlutterOutline(String path, FlutterOutline outline) {

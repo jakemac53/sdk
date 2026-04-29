@@ -16,10 +16,15 @@ import '../sdk.dart';
 String getDiscoveryFilePath() {
   String configDir;
   if (Platform.isLinux) {
-    configDir = Platform.environment['XDG_CONFIG_HOME'] ??
+    configDir =
+        Platform.environment['XDG_CONFIG_HOME'] ??
         p.join(Platform.environment['HOME']!, '.config');
   } else if (Platform.isMacOS) {
-    configDir = p.join(Platform.environment['HOME']!, 'Library', 'Application Support');
+    configDir = p.join(
+      Platform.environment['HOME']!,
+      'Library',
+      'Application Support',
+    );
   } else if (Platform.isWindows) {
     configDir = Platform.environment['APPDATA']!;
   } else {
@@ -68,7 +73,10 @@ Future<int> runMultiplexer() async {
     return 255;
   }
 
-  final serverProcess = await Process.start(sdk.dartAotRuntime, [script, '--protocol=lsp']);
+  final serverProcess = await Process.start(sdk.dartAotRuntime, [
+    script,
+    '--protocol=lsp',
+  ]);
   stderr.writeln('Spawned real analysis server (PID: ${serverProcess.pid})');
 
   // Handle server exit
@@ -134,24 +142,31 @@ class Multiplexer {
     socket
         .cast<List<int>>()
         .transform(LspPacketTransformer())
-        .listen((message) {
-          _handleClientMessage(socket, message);
-        }, onDone: () {
-          _clients.remove(socket);
-          _clientWorkspaces.remove(socket);
-          _clientOpenFiles.remove(socket);
-          _updateServerWorkspaces();
-          stderr.writeln('Client disconnected');
+        .listen(
+          (message) {
+            _handleClientMessage(socket, message);
+          },
+          onDone: () {
+            _clients.remove(socket);
+            _clientWorkspaces.remove(socket);
+            _clientOpenFiles.remove(socket);
+            _updateServerWorkspaces();
+            stderr.writeln('Client disconnected');
 
-          if (_clients.isEmpty) {
-            stderr.writeln('All clients disconnected. Starting shutdown timer...');
-            _shutdownTimer = Timer(_shutdownTimeout, () {
-              stderr.writeln('Shutdown timeout reached. Shutting down server...');
-              _serverProcess.kill();
-              exit(0);
-            });
-          }
-        });
+            if (_clients.isEmpty) {
+              stderr.writeln(
+                'All clients disconnected. Starting shutdown timer...',
+              );
+              _shutdownTimer = Timer(_shutdownTimeout, () {
+                stderr.writeln(
+                  'Shutdown timeout reached. Shutting down server...',
+                );
+                _serverProcess.kill();
+                exit(0);
+              });
+            }
+          },
+        );
   }
 
   void _handleServerMessage(String messagePayload) {
@@ -227,6 +242,10 @@ class Multiplexer {
         final params = message['params'] as Map<String, dynamic>?;
         final uri = params?['uri'] as String?;
         if (uri != null) {
+          final oldPayload = _cachedDiagnostics[uri];
+          if (oldPayload == messagePayload) {
+            return; // Skip redundant diagnostics
+          }
           _cachedDiagnostics[uri] = messagePayload;
           for (final client in _clients) {
             // Check if client has file open
@@ -270,7 +289,9 @@ class Multiplexer {
         final params = message['params'] as Map<String, dynamic>?;
         final workspaceFolders = params?['workspaceFolders'] as List<dynamic>?;
         if (workspaceFolders != null) {
-          final folders = workspaceFolders.map((f) => f['uri'] as String).toSet();
+          final folders = workspaceFolders
+              .map((f) => f['uri'] as String)
+              .toSet();
           _clientWorkspaces[client] = folders;
           _updateServerWorkspaces();
         }
@@ -284,7 +305,7 @@ class Multiplexer {
           final response = {
             'jsonrpc': '2.0',
             'id': clientId,
-            'result': _initializeResult
+            'result': _initializeResult,
           };
           client.write(formatLspMessage(jsonEncode(response)));
 
@@ -309,21 +330,30 @@ class Multiplexer {
             final regMessage = {
               'jsonrpc': '2.0',
               'method': 'server/registerCapability',
-              'params': {'registrations': newRegistrations}
+              'params': {'registrations': newRegistrations},
             };
-            _serverProcess.stdin.write(formatLspMessage(jsonEncode(regMessage)));
+            _serverProcess.stdin.write(
+              formatLspMessage(jsonEncode(regMessage)),
+            );
           }
           return;
         } else {
           _initialInitializeRequestId = 'req_${_requestIdCounter++}';
-          _pendingRequests[_initialInitializeRequestId!] = _PendingRequest(client, clientId);
+          _pendingRequests[_initialInitializeRequestId!] = _PendingRequest(
+            client,
+            clientId,
+          );
           message['id'] = _initialInitializeRequestId;
           _serverProcess.stdin.write(formatLspMessage(jsonEncode(message)));
           return;
         }
       } else if (method == 'shutdown') {
         // Don't actually forward these, just close the socket after sending a response;
-        client.write(formatLspMessage(jsonEncode({'jsonrpc': '2.0', 'id': clientId, 'result': null})));
+        client.write(
+          formatLspMessage(
+            jsonEncode({'jsonrpc': '2.0', 'id': clientId, 'result': null}),
+          ),
+        );
         await client.flush();
         client.close();
         return;
@@ -351,7 +381,7 @@ class Multiplexer {
             final response = {
               'jsonrpc': '2.0',
               'id': pending.serverId,
-              'result': null
+              'result': null,
             };
             _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
           }
@@ -364,8 +394,8 @@ class Multiplexer {
             'id': pending.serverId,
             'error': {
               'code': -32603,
-              'message': 'All clients failed to register capability'
-            }
+              'message': 'All clients failed to register capability',
+            },
           };
           _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
         }
@@ -385,11 +415,15 @@ class Multiplexer {
         if (_isServerInitialized) {
           _replayCachedDiagnostics(client);
           _replayCachedRegistrations(client);
-          client.write(formatLspMessage(jsonEncode({
-            'jsonrpc': '2.0',
-            'method': r'$/analyzerStatus',
-            'params': {'isAnalyzing': _isAnalyzing},
-          })));
+          client.write(
+            formatLspMessage(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'method': r'$/analyzerStatus',
+                'params': {'isAnalyzing': _isAnalyzing},
+              }),
+            ),
+          );
           return;
         }
         _isServerInitialized = true;
@@ -433,10 +467,14 @@ class Multiplexer {
           'method': 'workspace/didChangeWorkspaceFolders',
           'params': {
             'event': {
-              'added': foldersToAdd.map((uri) => {'uri': uri, 'name': p.basename(uri)}).toList(),
-              'removed': foldersToRemove.map((uri) => {'uri': uri, 'name': p.basename(uri)}).toList(),
-            }
-          }
+              'added': foldersToAdd
+                  .map((uri) => {'uri': uri, 'name': p.basename(uri)})
+                  .toList(),
+              'removed': foldersToRemove
+                  .map((uri) => {'uri': uri, 'name': p.basename(uri)})
+                  .toList(),
+            },
+          },
         };
         _serverProcess.stdin.write(formatLspMessage(jsonEncode(notification)));
       }
@@ -482,7 +520,7 @@ class Multiplexer {
         'jsonrpc': '2.0',
         'id': clientId,
         'method': 'client/registerCapability',
-        'params': {'registrations': supported}
+        'params': {'registrations': supported},
       };
       client.write(formatLspMessage(jsonEncode(clientMessage)));
     }
@@ -518,7 +556,10 @@ class Multiplexer {
     }
 
     if (supportingClients.isNotEmpty) {
-      final pendingRequest = _PendingServerRequest(serverId, Set.from(supportingClients));
+      final pendingRequest = _PendingServerRequest(
+        serverId,
+        Set.from(supportingClients),
+      );
 
       for (final client in supportingClients) {
         final clientId = 'srv_req_${_serverRequestIdCounter++}';
@@ -528,25 +569,30 @@ class Multiplexer {
           'jsonrpc': '2.0',
           'id': clientId,
           'method': 'client/registerCapability',
-          'params': {'registrations': clientRegistrations[client]}
+          'params': {'registrations': clientRegistrations[client]},
         };
         client.write(formatLspMessage(jsonEncode(clientMessage)));
       }
     } else {
-      stderr.writeln('No client supports any of the requested capabilities: $registrations');
+      stderr.writeln(
+        'No client supports any of the requested capabilities: $registrations',
+      );
       final response = {
         'jsonrpc': '2.0',
         'id': serverId,
         'error': {
           'code': -32601,
-          'message': 'No client supports any of the requested capabilities'
-        }
+          'message': 'No client supports any of the requested capabilities',
+        },
       };
       _serverProcess.stdin.write(formatLspMessage(jsonEncode(response)));
     }
   }
 
-  bool _clientSupportsFeature(Map<String, dynamic> capabilities, String method) {
+  bool _clientSupportsFeature(
+    Map<String, dynamic> capabilities,
+    String method,
+  ) {
     final parts = method.split('/');
     if (parts.length != 2) return false;
 
@@ -565,7 +611,11 @@ class Multiplexer {
     return false;
   }
 
-  bool _anyOtherClientSupports(Socket currentClient, String section, String feature) {
+  bool _anyOtherClientSupports(
+    Socket currentClient,
+    String section,
+    String feature,
+  ) {
     for (final client in _clients) {
       if (client == currentClient) continue;
       final caps = _clientCapabilities[client];
@@ -618,7 +668,9 @@ Future<int> runClientProxy(ArgResults argResults) async {
 
   if (ownsLock) {
     raf?.closeSync(); // Release lock so detached process can get it.
-    file.writeAsStringSync(''); // Truncate file so polling loop waits for new content.
+    file.writeAsStringSync(
+      '',
+    ); // Truncate file so polling loop waits for new content.
 
     // Spawn detached multiplexer
     final dartPath = Platform.executable;
@@ -626,7 +678,10 @@ Future<int> runClientProxy(ArgResults argResults) async {
     // Wait, we should only pass relevant arguments or just spawn it.
     // The user said "possibly spawning it as a detached process if there is no active one."
     // Let's spawn it with the --multiplexer flag.
-    Process.start(dartPath, ['language-server', '--multiplexer'], mode: ProcessStartMode.detached);
+    Process.start(dartPath, [
+      'language-server',
+      '--multiplexer',
+    ], mode: ProcessStartMode.detached);
 
     // Wait for the file to be written by the multiplexer
     int attempts = 0;
