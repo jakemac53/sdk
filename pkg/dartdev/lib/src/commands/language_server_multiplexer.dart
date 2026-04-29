@@ -42,11 +42,12 @@ String getDiscoveryFilePath() {
 /// Runs the multiplexer server.
 Future<int> runMultiplexer() async {
   final discoveryFile = getDiscoveryFilePath();
-  final file = File(discoveryFile);
+  final lockFile = File(discoveryFile);
+  final portFile = File(p.join(p.dirname(discoveryFile), 'multiplexer.port'));
 
   RandomAccessFile? raf;
   try {
-    raf = file.openSync(mode: FileMode.writeOnly);
+    raf = lockFile.openSync(mode: FileMode.writeOnlyAppend);
     raf.lockSync(); // Exclusive lock
   } catch (e) {
     stderr.writeln('Error: Failed to acquire lock for multiplexer: $e');
@@ -57,10 +58,8 @@ Future<int> runMultiplexer() async {
   final serverSocket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
   final port = serverSocket.port;
 
-  // Write port to file
-  raf.truncateSync(0);
-  raf.writeStringSync('$port');
-  raf.flushSync();
+  // Write port to port file
+  portFile.writeAsStringSync('$port', flush: true);
 
   // Note: We keep `raf` open and locked for the lifetime of the process.
 
@@ -827,34 +826,26 @@ String formatLspMessage(String jsonPayload) {
 /// Runs the client proxy that connects to the multiplexer.
 Future<int> runClientProxy(ArgResults argResults) async {
   final discoveryFile = getDiscoveryFilePath();
-  final file = File(discoveryFile);
+  final lockFile = File(discoveryFile);
+  final portFile = File(p.join(p.dirname(discoveryFile), 'multiplexer.port'));
 
   RandomAccessFile? raf;
   bool ownsLock = false;
 
   try {
-    raf = file.openSync(mode: FileMode.write);
-    try {
-      raf.lockSync();
-      ownsLock = true;
-    } catch (_) {
-      ownsLock = false;
-    }
+    raf = lockFile.openSync(mode: FileMode.writeOnlyAppend);
+    raf.lockSync();
+    ownsLock = true;
   } catch (_) {
     ownsLock = false;
   }
 
   if (ownsLock) {
-    raf?.truncateSync(0); // Truncate while holding the lock!
-    raf?.flushSync();
+    portFile.writeAsStringSync('', flush: true); // Truncate port file!
     raf?.closeSync(); // Release lock so detached process can get it.
 
     // Spawn detached multiplexer
     final dartPath = Platform.executable;
-    // We pass the same arguments we received, plus the --multiplexer flag.
-    // Wait, we should only pass relevant arguments or just spawn it.
-    // The user said "possibly spawning it as a detached process if there is no active one."
-    // Let's spawn it with the --multiplexer flag.
     Process.start(dartPath, [
       'language-server',
       '--multiplexer',
@@ -864,7 +855,7 @@ Future<int> runClientProxy(ArgResults argResults) async {
     int attempts = 0;
     while (attempts < 50) {
       try {
-        final content = file.readAsStringSync();
+        final content = portFile.readAsStringSync();
         if (content.isNotEmpty) {
           break;
         }
@@ -878,7 +869,7 @@ Future<int> runClientProxy(ArgResults argResults) async {
 
   // Now read the file and connect.
   try {
-    final content = file.readAsStringSync();
+    final content = portFile.readAsStringSync();
     if (content.isEmpty) {
       stderr.writeln('Error: Failed to connect to multiplexer (file empty)');
       return 255;
