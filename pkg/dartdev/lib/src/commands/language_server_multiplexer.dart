@@ -833,7 +833,7 @@ Future<int> runClientProxy(ArgResults argResults) async {
   bool ownsLock = false;
 
   try {
-    raf = file.openSync(mode: FileMode.writeOnlyAppend);
+    raf = file.openSync(mode: FileMode.write);
     try {
       raf.lockSync();
       ownsLock = true;
@@ -845,10 +845,9 @@ Future<int> runClientProxy(ArgResults argResults) async {
   }
 
   if (ownsLock) {
+    raf?.truncateSync(0); // Truncate while holding the lock!
+    raf?.flushSync();
     raf?.closeSync(); // Release lock so detached process can get it.
-    file.writeAsStringSync(
-      '',
-    ); // Truncate file so polling loop waits for new content.
 
     // Spawn detached multiplexer
     final dartPath = Platform.executable;
