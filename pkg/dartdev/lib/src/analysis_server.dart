@@ -7,18 +7,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:analysis_server/src/lsp/lsp_packet_transformer.dart';
-import 'package:analysis_server/src/server/driver.dart' show Driver;
 import 'package:analysis_server_client/protocol.dart'
     show
         AddContentOverlay,
         AnalysisUpdateContentParams,
         EditBulkFixesResult,
         ResponseDecoder;
+
 import 'package:args/args.dart';
 import 'package:path/path.dart' as path;
 
 import 'core.dart';
-import 'experiments.dart';
 import 'sdk.dart';
 import 'utils.dart';
 
@@ -39,13 +38,13 @@ class AnalysisServer {
     this.cacheDirectoryPath,
     required this.commandName,
     required this.argResults,
-    required bool usePlugins,
+    required this._usePlugins,
     this.enabledExperiments = const [],
     this.disableStatusNotificationDebouncing = false,
     this.suppressAnalytics = false,
     this._useAotSnapshot = false,
     this.socket,
-  }) : _usePlugins = usePlugins;
+  });
 
   final String? cacheDirectoryPath;
   final File? packagesFile;
@@ -174,6 +173,8 @@ class AnalysisServer {
   Future<int> start({bool setAnalysisRoots = true}) async {
     preAnalysisServerStart?.call(commandName, analysisRoots, argResults);
 
+    _analysisFinished = Completer<bool>();
+
     if (socket != null) {
       _shutdownResponseReceived = false;
     } else {
@@ -258,10 +259,10 @@ class AnalysisServer {
         // Start a new completer, to be completed when we receive the
         // corresponding analysis complete event.
         _analysisFinished = Completer();
-      } else if (!isAnalyzing &&
-          analysisFinished != null &&
-          !analysisFinished.isCompleted) {
-        analysisFinished.complete(true);
+      } else if (!isAnalyzing) {
+        if (analysisFinished != null && !analysisFinished.isCompleted) {
+          analysisFinished.complete(true);
+        }
       }
     });
 
@@ -477,6 +478,7 @@ class AnalysisServer {
   }
 
   Future<bool> dispose() async {
+    socket?.destroy();
     return _process?.kill() ?? true;
   }
 }

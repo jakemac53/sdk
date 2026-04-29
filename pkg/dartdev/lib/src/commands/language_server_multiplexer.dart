@@ -99,6 +99,7 @@ class Multiplexer {
   int _requestIdCounter = 0;
 
   bool _isServerInitialized = false;
+  bool _isAnalyzing = false;
   Map<String, dynamic>? _initializeResult;
   String? _initialInitializeRequestId;
 
@@ -106,6 +107,8 @@ class Multiplexer {
   Set<String> _currentServerWorkspaces = {};
   final Map<Socket, Map<String, dynamic>> _clientCapabilities = {};
   final Map<Socket, Set<String>> _clientOpenFiles = {};
+  final Map<String, String> _cachedDiagnostics = {};
+  final List<Map<String, dynamic>> _cachedRegistrations = [];
   final Map<String, dynamic> _pendingServerRequests = {};
   int _serverRequestIdCounter = 0;
   Timer? _shutdownTimer;
@@ -201,6 +204,7 @@ class Multiplexer {
             isAnalyzing = false;
           }
           if (isAnalyzing != null) {
+            _isAnalyzing = isAnalyzing;
             final statusMessage = {
               'jsonrpc': '2.0',
               'method': r'$/analyzerStatus',
@@ -223,6 +227,7 @@ class Multiplexer {
         final params = message['params'] as Map<String, dynamic>?;
         final uri = params?['uri'] as String?;
         if (uri != null) {
+          _cachedDiagnostics[uri] = messagePayload;
           for (final client in _clients) {
             // Check if client has file open
             final openFiles = _clientOpenFiles[client];
@@ -378,6 +383,13 @@ class Multiplexer {
       final method = message['method'];
       if (method == 'initialized') {
         if (_isServerInitialized) {
+          _replayCachedDiagnostics(client);
+          _replayCachedRegistrations(client);
+          client.write(formatLspMessage(jsonEncode({
+            'jsonrpc': '2.0',
+            'method': r'$/analyzerStatus',
+            'params': {'isAnalyzing': _isAnalyzing},
+          })));
           return;
         }
         _isServerInitialized = true;
@@ -432,11 +444,60 @@ class Multiplexer {
     }
   }
 
+  void _replayCachedDiagnostics(Socket client) {
+    final workspaces = _clientWorkspaces[client];
+    final openFiles = _clientOpenFiles[client];
+
+    _cachedDiagnostics.forEach((uri, messagePayload) {
+      // Check if client has file open
+      if (openFiles != null && openFiles.contains(uri)) {
+        client.write(formatLspMessage(messagePayload));
+        return;
+      }
+
+      // Check if file is in client's workspace
+      if (workspaces != null) {
+        for (final workspaceUri in workspaces) {
+          if (uri.startsWith(workspaceUri)) {
+            client.write(formatLspMessage(messagePayload));
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  void _replayCachedRegistrations(Socket client) {
+    final clientCaps = _clientCapabilities[client];
+    if (clientCaps == null) return;
+
+    final supported = _cachedRegistrations.where((reg) {
+      final method = reg['method'] as String;
+      return _clientSupportsFeature(clientCaps, method);
+    }).toList();
+
+    if (supported.isNotEmpty) {
+      final clientId = 'srv_req_${_serverRequestIdCounter++}';
+      final clientMessage = {
+        'jsonrpc': '2.0',
+        'id': clientId,
+        'method': 'client/registerCapability',
+        'params': {'registrations': supported}
+      };
+      client.write(formatLspMessage(jsonEncode(clientMessage)));
+    }
+  }
+
   void _handleRegisterCapability(Map<String, dynamic> message) {
     final serverId = message['id'];
     final params = message['params'] as Map<String, dynamic>?;
     final registrations = params?['registrations'] as List<dynamic>?;
     if (registrations == null) return;
+
+    // Cache registrations for late-joining clients
+    for (final reg in registrations) {
+      _cachedRegistrations.add(reg as Map<String, dynamic>);
+    }
 
     final supportingClients = <Socket>{};
     final clientRegistrations = <Socket, List<dynamic>>{};
